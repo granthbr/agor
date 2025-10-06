@@ -2,5 +2,5 @@
 
 import { execute } from '@oclif/core';
 
-// Disable stack traces for clean CLI output (even in dev mode)
-await execute({ development: false, dir: import.meta.url });
+// Use tsx to run TypeScript source directly in dev mode
+await execute({ development: true, dir: import.meta.url });
