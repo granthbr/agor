@@ -290,6 +290,7 @@ async function testGenealogy(db: ReturnType<typeof createDatabase>) {
     git_state: { ref: 'main', base_sha: 'def', current_sha: 'def' },
     genealogy: {
       forked_from_session_id: parent.session_id,
+      // biome-ignore lint/suspicious/noExplicitAny: Test data uses simplified types
       fork_point_task_id: 'task-123' as any,
       children: [],
     },
@@ -305,6 +306,7 @@ async function testGenealogy(db: ReturnType<typeof createDatabase>) {
     git_state: { ref: 'main', base_sha: 'def', current_sha: 'def' },
     genealogy: {
       parent_session_id: parent.session_id,
+      // biome-ignore lint/suspicious/noExplicitAny: Test data uses simplified types
       spawn_point_task_id: 'task-456' as any,
       children: [],
     },

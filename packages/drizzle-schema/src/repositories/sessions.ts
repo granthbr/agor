@@ -26,6 +26,7 @@ export class SessionRepository implements BaseRepository<Session, Partial<Sessio
    * Convert database row to Session type
    */
   private rowToSession(row: SessionRow): Session {
+    // biome-ignore lint/suspicious/noExplicitAny: Repository layer uses JSON columns for flexible data storage
     const data = row.data as any;
     return {
       session_id: row.session_id,

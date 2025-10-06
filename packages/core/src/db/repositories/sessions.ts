@@ -26,7 +26,6 @@ export class SessionRepository implements BaseRepository<Session, Partial<Sessio
    * Convert database row to Session type
    */
   private rowToSession(row: SessionRow): Session {
-    const data = row.data as any;
     return {
       session_id: row.session_id,
       status: row.status,
@@ -36,12 +35,12 @@ export class SessionRepository implements BaseRepository<Session, Partial<Sessio
       last_updated: row.updated_at
         ? new Date(row.updated_at).toISOString()
         : new Date(row.created_at).toISOString(),
-      ...data,
+      ...row.data,
       genealogy: {
-        ...data.genealogy,
-        parent_session_id: row.parent_session_id ?? data.genealogy?.parent_session_id,
+        ...row.data.genealogy,
+        parent_session_id: row.parent_session_id ?? row.data.genealogy?.parent_session_id,
         forked_from_session_id:
-          row.forked_from_session_id ?? data.genealogy?.forked_from_session_id,
+          row.forked_from_session_id ?? row.data.genealogy?.forked_from_session_id,
       },
     };
   }

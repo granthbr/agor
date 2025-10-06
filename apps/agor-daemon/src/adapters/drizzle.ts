@@ -275,9 +275,13 @@ export class DrizzleService<T = any, D = Partial<T>, P extends Params = Params> 
       let records = await this.repository.findAll();
       records = this.filterData(records, query);
 
-      // biome-ignore lint/suspicious/noExplicitAny: Need to access ID field dynamically
       return Promise.all(
-        records.map(record => this.repository.update((record as any)[this.id], data as Partial<T>))
+        records.map(record =>
+          this.repository.update(
+            (record as Record<string, unknown>)[this.id] as string,
+            data as Partial<T>
+          )
+        )
       );
     }
 

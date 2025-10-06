@@ -32,6 +32,7 @@ export class TaskRepository implements BaseRepository<Task, Partial<Task>> {
       status: row.status,
       created_at: new Date(row.created_at).toISOString(),
       completed_at: row.completed_at ? new Date(row.completed_at).toISOString() : undefined,
+      // biome-ignore lint/suspicious/noExplicitAny: Repository layer uses JSON columns for flexible data storage
       ...(row.data as any),
     };
   }

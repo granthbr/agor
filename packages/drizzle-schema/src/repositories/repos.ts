@@ -33,6 +33,7 @@ export class RepoRepository implements BaseRepository<Repo, Partial<Repo>> {
       last_updated: row.updated_at
         ? new Date(row.updated_at).toISOString()
         : new Date(row.created_at).toISOString(),
+      // biome-ignore lint/suspicious/noExplicitAny: Repository layer uses JSON columns for flexible data storage
       ...(row.data as any),
     };
   }

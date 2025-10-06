@@ -32,7 +32,7 @@ export class BoardRepository implements BaseRepository<Board, Partial<Board>> {
       last_updated: row.updated_at
         ? new Date(row.updated_at).toISOString()
         : new Date(row.created_at).toISOString(),
-      ...(row.data as any),
+      ...row.data,
     };
   }
 
@@ -144,13 +144,7 @@ export class BoardRepository implements BaseRepository<Board, Partial<Board>> {
    */
   async findBySlug(slug: string): Promise<Board | null> {
     try {
-      const rows = await this.db.select().from(boards).all();
-
-      // Filter by slug in JSON data
-      const row = rows.find(r => {
-        const data = r.data as any;
-        return data.slug === slug;
-      });
+      const row = await this.db.select().from(boards).where(eq(boards.slug, slug)).get();
 
       return row ? this.rowToBoard(row) : null;
     } catch (error) {
@@ -247,8 +241,8 @@ export class BoardRepository implements BaseRepository<Board, Partial<Board>> {
         throw new EntityNotFoundError('Board', boardId);
       }
 
-      if (!board.sessions.includes(sessionId as any)) {
-        board.sessions.push(sessionId as any);
+      if (!board.sessions.includes(sessionId)) {
+        board.sessions.push(sessionId);
         return this.update(boardId, { sessions: board.sessions });
       }
 
@@ -273,7 +267,7 @@ export class BoardRepository implements BaseRepository<Board, Partial<Board>> {
         throw new EntityNotFoundError('Board', boardId);
       }
 
-      board.sessions = board.sessions.filter(id => id !== sessionId) as any[];
+      board.sessions = board.sessions.filter(id => id !== sessionId);
       return this.update(boardId, { sessions: board.sessions });
     } catch (error) {
       if (error instanceof RepositoryError) throw error;
