@@ -67,9 +67,9 @@ export class MessagesRepository {
    * Bulk insert messages (optimized for session loading)
    */
   async createMany(messageList: Message[]): Promise<Message[]> {
-    const rows = messageList.map((m) => this.messageToRow(m));
+    const rows = messageList.map(m => this.messageToRow(m));
     const inserted = await this.db.insert(messages).values(rows).returning();
-    return inserted.map((r) => this.rowToMessage(r));
+    return inserted.map(r => this.rowToMessage(r));
   }
 
   /**
@@ -86,6 +86,14 @@ export class MessagesRepository {
   }
 
   /**
+   * Get all messages (used by FeathersJS service adapter)
+   */
+  async findAll(): Promise<Message[]> {
+    const rows = await this.db.select().from(messages).orderBy(messages.index);
+    return rows.map(r => this.rowToMessage(r));
+  }
+
+  /**
    * Get all messages for a session (ordered by index)
    */
   async findBySessionId(sessionId: SessionID): Promise<Message[]> {
@@ -95,7 +103,7 @@ export class MessagesRepository {
       .where(eq(messages.session_id, sessionId))
       .orderBy(messages.index);
 
-    return rows.map((r) => this.rowToMessage(r));
+    return rows.map(r => this.rowToMessage(r));
   }
 
   /**
@@ -108,7 +116,7 @@ export class MessagesRepository {
       .where(eq(messages.task_id, taskId))
       .orderBy(messages.index);
 
-    return rows.map((r) => this.rowToMessage(r));
+    return rows.map(r => this.rowToMessage(r));
   }
 
   /**
@@ -128,8 +136,30 @@ export class MessagesRepository {
 
     // Filter by range in memory (simpler than complex SQL)
     return rows
-      .filter((r) => r.index >= startIndex && r.index <= endIndex)
-      .map((r) => this.rowToMessage(r));
+      .filter(r => r.index >= startIndex && r.index <= endIndex)
+      .map(r => this.rowToMessage(r));
+  }
+
+  /**
+   * Update message (used by FeathersJS service adapter)
+   */
+  async update(messageId: string, updates: Partial<Message>): Promise<Message> {
+    const existing = await this.findById(messageId as MessageID);
+    if (!existing) {
+      throw new Error(`Message ${messageId} not found`);
+    }
+
+    // Merge updates with existing message
+    const updated = { ...existing, ...updates };
+    const row = this.messageToRow(updated);
+
+    const [result] = await this.db
+      .update(messages)
+      .set(row)
+      .where(eq(messages.message_id, messageId))
+      .returning();
+
+    return this.rowToMessage(result);
   }
 
   /**

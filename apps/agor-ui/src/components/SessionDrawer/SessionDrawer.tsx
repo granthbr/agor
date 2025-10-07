@@ -1,43 +1,27 @@
 import type { AgorClient } from '@agor/core/api';
 import {
   BranchesOutlined,
-  ClockCircleOutlined,
   CodeOutlined,
   DownOutlined,
   EditOutlined,
-  FileTextOutlined,
   ForkOutlined,
   GithubOutlined,
-  MessageOutlined,
   PlusSquareOutlined,
   SendOutlined,
-  ToolOutlined,
 } from '@ant-design/icons';
-import {
-  Badge,
-  Button,
-  Divider,
-  Drawer,
-  Dropdown,
-  Input,
-  Space,
-  Tag,
-  Timeline,
-  Typography,
-} from 'antd';
+import { Badge, Button, Divider, Drawer, Dropdown, Input, Space, Tag, Typography } from 'antd';
 import React from 'react';
-import type { Session, Task } from '../../types';
+import type { Session } from '../../types';
 import { ConversationView } from '../ConversationView';
 import { ToolIcon } from '../ToolIcon';
 import './SessionDrawer.css';
 
-const { Title, Text, Paragraph } = Typography;
+const { Title, Text } = Typography;
 const { TextArea } = Input;
 
 interface SessionDrawerProps {
   client: AgorClient | null;
   session: Session | null;
-  tasks: Task[];
   open: boolean;
   onClose: () => void;
   onSendPrompt?: (prompt: string) => void;
@@ -48,7 +32,6 @@ interface SessionDrawerProps {
 const SessionDrawer = ({
   client,
   session,
-  tasks,
   open,
   onClose,
   onSendPrompt,
@@ -88,32 +71,6 @@ const SessionDrawer = ({
         return 'error';
       default:
         return 'default';
-    }
-  };
-
-  const getTaskStatusIcon = (status: Task['status']) => {
-    switch (status) {
-      case 'completed':
-        return '✓';
-      case 'running':
-        return '⚡';
-      case 'failed':
-        return '✗';
-      default:
-        return '○';
-    }
-  };
-
-  const getTaskStatusColor = (status: Task['status']) => {
-    switch (status) {
-      case 'completed':
-        return 'green';
-      case 'running':
-        return 'blue';
-      case 'failed':
-        return 'red';
-      default:
-        return 'gray';
     }
   };
 
@@ -251,97 +208,15 @@ const SessionDrawer = ({
 
       <Divider />
 
-      {/* Conversation View */}
-      <div className="drawer-section">
+      {/* Task-Centric Conversation View */}
+      <div
+        className="drawer-section"
+        style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}
+      >
         <Title level={5}>Conversation</Title>
-        <div style={{ height: '400px', border: '1px solid #d9d9d9', borderRadius: '4px' }}>
+        <div style={{ flex: 1, border: '1px solid #d9d9d9', borderRadius: '4px', minHeight: 0 }}>
           <ConversationView client={client} sessionId={session.session_id} />
         </div>
-      </div>
-
-      <Divider />
-
-      {/* Task Timeline */}
-      <div className="drawer-section">
-        <Title level={5}>
-          Task History ({tasks.length} {tasks.length === 1 ? 'task' : 'tasks'})
-        </Title>
-
-        <Timeline
-          mode="left"
-          items={tasks.map(task => ({
-            color: getTaskStatusColor(task.status),
-            dot: task.status === 'running' ? <ClockCircleOutlined /> : undefined,
-            children: (
-              <div className="task-timeline-item">
-                <div className="task-timeline-header">
-                  <Space size={8}>
-                    <span className="task-status-icon">{getTaskStatusIcon(task.status)}</span>
-                    <Text strong>{task.description || 'User Prompt'}</Text>
-                  </Space>
-                </div>
-
-                <div className="task-full-prompt">
-                  <Paragraph
-                    ellipsis={{ rows: 3, expandable: true, symbol: 'show more' }}
-                    style={{
-                      marginTop: 4,
-                      padding: 8,
-                      background: 'rgba(0, 0, 0, 0.02)',
-                      borderRadius: 4,
-                      fontSize: 13,
-                      fontFamily: 'monospace',
-                      whiteSpace: 'pre-wrap',
-                    }}
-                  >
-                    {task.full_prompt}
-                  </Paragraph>
-                </div>
-
-                <Space size={16} style={{ marginTop: 8 }}>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    <MessageOutlined />{' '}
-                    {task.message_range.end_index - task.message_range.start_index + 1}
-                  </Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    <ToolOutlined /> {task.tool_use_count}
-                  </Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    🤖 {task.model}
-                  </Text>
-                  {task.git_state.sha_at_end && (
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      <GithubOutlined /> {task.git_state.sha_at_end.substring(0, 7)}
-                    </Text>
-                  )}
-                  {task.report && (
-                    <Tag icon={<FileTextOutlined />} color="green" style={{ fontSize: 11 }}>
-                      Report
-                    </Tag>
-                  )}
-                </Space>
-
-                {task.git_state.commit_message && (
-                  <div style={{ marginTop: 8 }}>
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      Commit:{' '}
-                      <Text code style={{ fontSize: 11 }}>
-                        {task.git_state.commit_message}
-                      </Text>
-                    </Text>
-                  </div>
-                )}
-
-                <div style={{ marginTop: 4 }}>
-                  <Text type="secondary" style={{ fontSize: 11 }}>
-                    {new Date(task.created_at).toLocaleString()}
-                    {task.completed_at && ` → ${new Date(task.completed_at).toLocaleString()}`}
-                  </Text>
-                </div>
-              </div>
-            ),
-          }))}
-        />
       </div>
 
       {/* Session Metadata */}

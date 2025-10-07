@@ -144,7 +144,6 @@ export const App: React.FC<AppProps> = ({
       <SessionDrawer
         client={client}
         session={selectedSession}
-        tasks={selectedSessionTasks}
         open={!!selectedSessionId}
         onClose={() => setSelectedSessionId(null)}
         onSendPrompt={handleSendPrompt}

@@ -49,6 +49,7 @@
   },
   "scripts": {
     "build": "tsup",
+    "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "db:setup": "tsx src/db/scripts/setup.ts",
     "db:test": "tsx src/db/scripts/test-integration.ts"

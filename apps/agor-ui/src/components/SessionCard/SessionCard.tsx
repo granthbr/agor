@@ -145,9 +145,16 @@ const SessionCard = ({
           marginBottom: 12,
         }}
       >
-        <Space size={8} align="center" className="nodrag">
-          <ToolIcon tool={session.agent} size={32} />
-          <Text strong>{session.agent}</Text>
+        <Space size={8} align="center">
+          <div
+            className="drag-handle"
+            style={{ cursor: 'grab', display: 'flex', alignItems: 'center' }}
+          >
+            <ToolIcon tool={session.agent} size={32} />
+          </div>
+          <Text strong className="nodrag">
+            {session.agent}
+          </Text>
           {session.status === 'running' ? (
             <Spin indicator={<LoadingOutlined spin style={{ fontSize: 14 }} />} />
           ) : (

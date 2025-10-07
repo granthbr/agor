@@ -1,0 +1,24 @@
+.message-block {
+  margin: 8px 0;
+}
+
+.message-tools-only {
+  margin: 12px 0;
+}
+
+.message-text {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.message-tools {
+  margin-top: 12px;
+}
+
+.message-tools > * {
+  margin-bottom: 8px;
+}
+
+.message-tools > *:last-child {
+  margin-bottom: 0;
+}

@@ -23,8 +23,11 @@
 **UI Prototype** (`apps/agor-ui/`)
 
 - Complete React + Ant Design component library with Storybook
-- SessionCard, SessionDrawer, SessionCanvas with React Flow
+- SessionCard with drag handles and task preview
+- SessionDrawer with ConversationView (Ant Design X Bubble)
+- SessionCanvas with React Flow for tree visualization
 - Board organization and session tree visualization
+- Real messages API integration with WebSocket subscriptions
 - Mock data layer with 18+ realistic sessions
 
 **Backend Infrastructure** (`apps/agor-daemon/`, `packages/core/`)
@@ -81,12 +84,14 @@
 - [ ] Daemon auto-start (spawn daemon if not running)
 - [ ] Process management (PID file, graceful shutdown)
 
-### 📋 Phase 4: UI Integration & Desktop App
+### 🚧 Phase 4: UI Integration & Desktop App
 
 **Connect UI to Backend**
 
-- [ ] Replace mock data with daemon API calls
-- [ ] Real-time updates via WebSocket
+- [x] Messages API integration with real-time WebSocket
+- [x] ConversationView component with Ant Design X Bubble
+- [x] SessionDrawer with live message loading
+- [ ] Replace remaining mock data with daemon API calls
 - [ ] Session creation flow integrated with daemon
 - [ ] Task timeline visualization from messages table
 - [ ] Genealogy tree rendering from database

@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@agor/core": "workspace:*",
+    "@ant-design/icons": "^6.1.0",
     "@ant-design/x": "^1.6.1",
     "@feathersjs/feathers": "^5.0.35",
     "@feathersjs/socketio-client": "^5.0.35",

@@ -15,6 +15,7 @@ This file provides guidance to Claude Code when working with the Agor codebase.
 All architectural documentation lives in `context/concepts/`. **Read these first** before making changes:
 
 ### Core Concepts (Start Here)
+
 - **`context/concepts/core.md`** - Five core primitives (Session, Task, Report, Worktree, Concept), vision, core insights
 - **`context/concepts/models.md`** - Canonical data model definitions and relationships
 - **`context/concepts/architecture.md`** - System design, storage structure, and component interactions
@@ -22,6 +23,7 @@ All architectural documentation lives in `context/concepts/`. **Read these first
 - **`context/concepts/design.md`** - UI/UX standards and component patterns (for agor-ui work)
 
 ### Explorations (WIP/Future)
+
 - `context/explorations/agent-interface.md` - Agent abstraction layer design
 - `context/explorations/state-management.md` - Drizzle + LibSQL persistence patterns
 - `context/explorations/state-broadcasting.md` - Real-time sync architecture
@@ -62,25 +64,47 @@ agor/
 ## Tech Stack
 
 ### Backend (Current Focus)
+
 - **FeathersJS** - REST + WebSocket API framework
 - **Drizzle ORM** - Type-safe database layer
 - **LibSQL** - SQLite-compatible database (local file + future cloud sync)
 - **simple-git** - Git operations for repo/worktree management
 
 ### Frontend (UI Prototype)
-- **React 19 + TypeScript + Vite**
+
+- **React 18 + TypeScript + Vite**
 - **Ant Design** - Component library (dark mode default, strict token usage)
 - **Storybook** - Component development
 - **React Flow** - Session tree canvas visualization
 
 ### CLI
+
 - **oclif** - CLI framework
 - **chalk** - Terminal colors and formatting
 - **cli-table3** - Table rendering
 
 ## Development Commands
 
+**CRITICAL:** Always run `@agor/core` package in watch mode when developing:
+
+```bash
+# Terminal 1: Watch and rebuild @agor/core on changes
+cd packages/core
+pnpm dev
+
+# Terminal 2: Run daemon (auto-restarts when core rebuilds)
+cd apps/agor-daemon
+pnpm dev
+
+# Terminal 3: Run UI
+cd apps/agor-ui
+pnpm dev
+```
+
+**Why this matters:** The `@agor/core` package exports BUILT files from `dist/`, not source files. When you edit `src/`, you must rebuild for changes to take effect. Running `pnpm dev` in `packages/core` watches for changes and auto-rebuilds.
+
 ### Daemon
+
 ```bash
 cd apps/agor-daemon
 pnpm dev                    # Start daemon on :3030
@@ -88,6 +112,7 @@ curl http://localhost:3030/health  # Check health
 ```
 
 ### CLI
+
 ```bash
 # Run commands from project root
 pnpm agor session list              # List sessions
@@ -101,6 +126,7 @@ cd apps/agor-cli
 ```
 
 ### UI
+
 ```bash
 cd apps/agor-ui
 pnpm storybook              # Start Storybook on :6006
@@ -110,6 +136,7 @@ pnpm test                   # Vitest tests
 ```
 
 ### Database
+
 ```bash
 # Initialize database schema
 cd packages/core
@@ -134,6 +161,7 @@ See `context/concepts/core.md` for full details.
 See `context/concepts/models.md` for canonical definitions.
 
 **Key Types** (in `packages/core/src/types/`):
+
 - `Session` - session_id, agent, status, repo, git_state, genealogy, concepts, tasks
 - `Task` - task_id, session_id, status, description, message_range, git_state
 - `Message` - message_id, session_id, task_id, type, role, content, tool_uses
@@ -141,6 +169,7 @@ See `context/concepts/models.md` for canonical definitions.
 - `Board` - board_id, name, sessions (organize sessions like Trello)
 
 **ID Management** (see `context/concepts/id-management.md`):
+
 - UUIDv7 for time-ordered unique IDs
 - Branded types for type safety: `SessionID`, `TaskID`, `MessageID`, etc.
 - Short ID display format: `0199b856` (first 8 chars)
@@ -151,6 +180,7 @@ See `context/concepts/models.md` for canonical definitions.
 See `context/concepts/architecture.md` for full schema.
 
 **Tables** (SQLite via LibSQL + Drizzle):
+
 - `sessions` - Session records with materialized columns + JSON data blob
 - `tasks` - Task records linked to sessions
 - `messages` - Conversation messages (indexed by session_id, task_id, index)
@@ -158,6 +188,7 @@ See `context/concepts/architecture.md` for full schema.
 - `boards` - Session organization boards
 
 **Hybrid Storage Strategy:**
+
 - Materialized columns for filtering/joins (status, agent, timestamps)
 - JSON blobs for nested data (genealogy, git_state, metadata)
 - B-tree indexes on frequently queried fields
@@ -167,6 +198,7 @@ See `context/concepts/architecture.md` for full schema.
 Located in `apps/agor-daemon/src/services/`:
 
 **Core Services:**
+
 - `/sessions` - CRUD + fork/spawn/genealogy custom methods
 - `/tasks` - CRUD + complete/fail custom methods
 - `/messages` - CRUD + `/messages/bulk` for batch inserts
@@ -174,6 +206,7 @@ Located in `apps/agor-daemon/src/services/`:
 - `/boards` - CRUD + session association
 
 **Custom Routes:**
+
 - `POST /sessions/:id/fork` - Fork session at decision point
 - `POST /sessions/:id/spawn` - Spawn child session
 - `GET /sessions/:id/genealogy` - Get full genealogy tree
@@ -189,6 +222,7 @@ Located in `apps/agor-daemon/src/services/`:
 See `apps/agor-cli/src/commands/` for implementations.
 
 **Session Commands:**
+
 - `session list` - List all sessions in table format
 - `session show <id>` - Show session details
 - `session load-claude <id>` - Import Claude Code session from transcript
@@ -199,10 +233,12 @@ See `apps/agor-cli/src/commands/` for implementations.
   - Optional `--board` flag to add to board
 
 **Repo Commands:**
+
 - `repo list` - List registered repositories
 - `repo add <url>` - Clone and register git repository
 
 **Important CLI Patterns:**
+
 - Always use socket cleanup: `await new Promise<void>((resolve) => { client.io.on('disconnect', resolve); client.io.close(); setTimeout(resolve, 1000); }); process.exit(0);`
 - No stacktraces on errors: Use `this.log(chalk.red('✗ Error'))` + `process.exit(1)` instead of `this.error()`
 - Show progress for long operations (e.g., batched message inserts)
@@ -212,20 +248,23 @@ See `apps/agor-cli/src/commands/` for implementations.
 See `context/concepts/architecture.md` for git workflows.
 
 **Repository Management:**
+
 - Clone to `~/.agor/repos/<name>`
 - Track in database with metadata (default_branch, remote_url, etc.)
 
 **Worktree Isolation:**
+
 - Create worktrees in `~/.agor/worktrees/<repo>/<worktree-name>`
 - Each session gets isolated working directory
 - Enables parallel work across multiple sessions/agents
 
 **Git State Tracking:**
+
 ```typescript
 git_state: {
-  ref: string;              // Branch/tag name
-  base_sha: string;         // Starting commit
-  current_sha: string;      // Current commit (can be "{sha}-dirty")
+  ref: string; // Branch/tag name
+  base_sha: string; // Starting commit
+  current_sha: string; // Current commit (can be "{sha}-dirty")
 }
 ```
 
@@ -234,18 +273,21 @@ git_state: {
 See implementation in `packages/core/src/db/repositories/messages.ts`.
 
 **Message Table:**
+
 - Stores full conversation history from agent sessions
 - Indexed by session_id, task_id, and (session_id, index)
 - Content stored in JSON blob with preview field for display
 - Supports bulk inserts (batched at 100 messages for performance)
 
 **Message Types:**
+
 - `user` - User input messages
 - `assistant` - Agent responses
 - `system` - System messages
 - `file-history-snapshot` - File state snapshots
 
 **Loading Claude Code Sessions:**
+
 - Parse JSONL transcript from `~/.claude/projects/`
 - Filter to conversation messages (exclude meta/snapshots)
 - Convert to Agor message format
@@ -256,10 +298,12 @@ See implementation in `packages/core/src/db/repositories/messages.ts`.
 See implementation in `packages/core/src/claude/task-extractor.ts`.
 
 **Architecture:**
+
 - **Messages** = Immutable append-only event log
 - **Tasks** = Mutable state containers tracking conversation turns
 
 **Extraction Logic:**
+
 - Each user message defines a task boundary
 - Message range spans from user message to next user message (or end)
 - Tasks are extracted with:
@@ -271,6 +315,7 @@ See implementation in `packages/core/src/claude/task-extractor.ts`.
   - `git_state.sha_at_start: 'unknown'` - No git tracking in Claude Code transcripts
 
 **Bulk Operations:**
+
 - `/tasks/bulk` endpoint for efficient batch creation
 - Batched at 100 tasks per request
 - Returns created task records for session linking
@@ -278,6 +323,7 @@ See implementation in `packages/core/src/claude/task-extractor.ts`.
 ## Development Workflow
 
 ### Adding New Features
+
 1. **Read architecture docs first** - `context/concepts/architecture.md`
 2. **Check data models** - `context/concepts/models.md`
 3. **Update types** - `packages/core/src/types/`
@@ -287,6 +333,7 @@ See implementation in `packages/core/src/claude/task-extractor.ts`.
 7. **Add CLI command** - `apps/agor-cli/src/commands/`
 
 ### Code Standards
+
 - **Type-driven:** Use branded types for IDs, strict TypeScript
 - **Read before edit:** Always read files before modifying
 - **Prefer Edit over Write:** Modify existing files when possible
@@ -295,6 +342,7 @@ See implementation in `packages/core/src/claude/task-extractor.ts`.
 - **Batch operations:** Use batching for bulk database operations (100-500 items)
 
 ### Testing
+
 ```bash
 # Database operations
 sqlite3 ~/.agor/agor.db "SELECT COUNT(*) FROM messages"
@@ -310,6 +358,7 @@ pnpm agor repo list
 ## Implementation Status
 
 **Completed:**
+
 - ✅ Database schema with all tables (sessions, tasks, messages, repos, boards)
 - ✅ FeathersJS daemon with REST + WebSocket APIs
 - ✅ Repository layer with Drizzle ORM
@@ -322,16 +371,56 @@ pnpm agor repo list
 - ✅ Socket cleanup and error handling
 
 **In Progress:**
-- 🔄 UI integration with backend APIs
+
+- 🔄 Full UI integration with backend APIs (messages API complete)
 - 🔄 Report generation from tasks
 - 🔄 Real-time task state updates
 
 **Future:**
+
 - 📋 Agent interface abstraction layer
 - 📋 Real-time collaboration features
 - 📋 Cloud sync with Turso
 
 See `PROJECT.md` for detailed roadmap.
+
+## Troubleshooting
+
+### "Method is not a function" errors after editing @agor/core
+
+**Symptom:** After editing files in `packages/core/src/`, the daemon throws errors like `this.repository.findAll is not a function`.
+
+**Root Cause:** The `@agor/core` package exports BUILT files from `dist/`, not source files. When tsx runs the daemon, it loads the compiled `dist/` files. If you edit source but don't rebuild, tsx serves stale code.
+
+**Solution:**
+
+1. Always run `pnpm dev` in `packages/core` (Terminal 1) - this watches and rebuilds on changes
+2. If you forgot, manually rebuild: `cd packages/core && pnpm build`
+3. The daemon will auto-restart when it detects changes in `dist/`
+
+**Prevention:** Follow the 3-terminal dev workflow documented above.
+
+### tsx watch mode not picking up changes
+
+**Symptom:** tsx watch mode doesn't restart after making changes.
+
+**Solution:** Clear tsx cache and restart:
+
+```bash
+cd apps/agor-daemon
+rm -rf node_modules/.tsx
+# Kill daemon and restart with pnpm dev
+```
+
+### Daemon hanging or not responding
+
+**Solution:** Kill all node/tsx processes and restart:
+
+```bash
+lsof -ti:3030 | xargs kill -9
+cd apps/agor-daemon
+pnpm dev
+```
 
 ## Philosophy
 

@@ -1,25 +1,26 @@
 /**
- * ConversationView - Beautiful chat interface using Ant Design X Bubble
+ * ConversationView - Task-centric conversation interface
  *
- * Displays conversation messages with:
- * - User messages on the right
- * - Assistant messages on the left
- * - Typing effects for assistant responses
- * - Loading states
- * - Auto-scrolling to latest message
+ * Displays conversation as collapsible task sections with:
+ * - Tasks as primary organization unit
+ * - Messages grouped within each task
+ * - Tool use blocks properly rendered
+ * - Latest task expanded by default
+ * - Progressive disclosure for older tasks
+ * - Auto-scrolling to latest content
  *
- * This component is purely presentational - it receives messages and renders them.
- * Message fetching is handled by parent components via useMessages hook.
+ * Based on design in context/explorations/conversation-design.md
  */
 
 import type { AgorClient } from '@agor/core/api';
-import type { SessionID } from '@agor/core/types';
-import { RobotOutlined, UserOutlined } from '@ant-design/icons';
-import { Bubble } from '@ant-design/x';
-import { Alert, Avatar, Spin } from 'antd';
-import { useEffect, useRef } from 'react';
-import { useMessages } from '../../hooks';
-import type { Message } from '../../types';
+import type { Message, SessionID, Task } from '@agor/core/types';
+import { Alert, Empty, Spin, Typography } from 'antd';
+import { useEffect, useMemo, useRef } from 'react';
+import { useMessages, useTasks } from '../../hooks';
+import { MessageBlock } from '../MessageBlock';
+import { TaskBlock } from '../TaskBlock';
+
+const { Text } = Typography;
 
 export interface ConversationViewProps {
   /**
@@ -36,8 +37,31 @@ export interface ConversationViewProps {
 export const ConversationView: React.FC<ConversationViewProps> = ({ client, sessionId }) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Fetch messages for this session
-  const { messages, loading, error } = useMessages(client, sessionId);
+  // Fetch messages and tasks for this session
+  const {
+    messages,
+    loading: messagesLoading,
+    error: messagesError,
+  } = useMessages(client, sessionId);
+  const { tasks, loading: tasksLoading, error: tasksError } = useTasks(client, sessionId);
+
+  const loading = messagesLoading || tasksLoading;
+  const error = messagesError || tasksError;
+
+  // Group messages by task
+  const taskWithMessages = useMemo(() => {
+    if (tasks.length === 0) return [];
+
+    return tasks.map(task => ({
+      task,
+      messages: messages.filter(msg => msg.task_id === task.task_id),
+    }));
+  }, [tasks, messages]);
+
+  // Find orphaned messages (messages without a task_id)
+  const orphanedMessages = useMemo(() => {
+    return messages.filter(msg => !msg.task_id);
+  }, [messages]);
 
   // Auto-scroll to bottom when new messages arrive
   // biome-ignore lint/correctness/useExhaustiveDependencies: We want to scroll on messages change
@@ -45,34 +69,34 @@ export const ConversationView: React.FC<ConversationViewProps> = ({ client, sess
     if (containerRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
-  }, [messages]);
-
-  // Extract text content from message
-  const getMessageText = (message: Message): string => {
-    if (typeof message.content === 'string') {
-      return message.content;
-    }
-
-    if (Array.isArray(message.content)) {
-      // Find text blocks in content array
-      const textBlocks = message.content
-        .filter((block: { type: string }) => block.type === 'text')
-        .map((block: { text?: string }) => block.text || '')
-        .join('\n\n');
-      return textBlocks || message.content_preview || '';
-    }
-
-    return message.content_preview || '';
-  };
+  }, [messages, tasks]);
 
   if (error) {
-    return <Alert type="error" message="Failed to load messages" description={error} showIcon />;
+    return (
+      <Alert type="error" message="Failed to load conversation" description={error} showIcon />
+    );
   }
 
-  if (loading && messages.length === 0) {
+  if (loading && messages.length === 0 && tasks.length === 0) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
-        <Spin tip="Loading messages..." />
+        <Spin tip="Loading conversation..." />
+      </div>
+    );
+  }
+
+  if (messages.length === 0 && tasks.length === 0) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          height: '100%',
+          padding: '2rem',
+        }}
+      >
+        <Empty description="No conversation yet" />
       </div>
     );
   }
@@ -84,37 +108,30 @@ export const ConversationView: React.FC<ConversationViewProps> = ({ client, sess
         height: '100%',
         overflowY: 'auto',
         padding: '16px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '16px',
       }}
     >
-      {messages.map(message => {
-        const isUser = message.role === 'user';
-        const text = getMessageText(message);
+      {/* Orphaned messages (messages without task_id) */}
+      {orphanedMessages.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <Text type="secondary" style={{ fontSize: 12, fontStyle: 'italic' }}>
+            Messages without associated tasks:
+          </Text>
+          {orphanedMessages.map(message => (
+            <MessageBlock key={message.message_id} message={message} />
+          ))}
+        </div>
+      )}
 
-        return (
-          <Bubble
-            key={message.message_id}
-            placement={isUser ? 'end' : 'start'}
-            avatar={
-              isUser ? (
-                <Avatar icon={<UserOutlined />} style={{ backgroundColor: '#1890ff' }} />
-              ) : (
-                <Avatar icon={<RobotOutlined />} style={{ backgroundColor: '#52c41a' }} />
-              )
-            }
-            content={text}
-            variant={isUser ? 'filled' : 'outlined'}
-            styles={{
-              content: {
-                backgroundColor: isUser ? '#1890ff' : undefined,
-                color: isUser ? '#fff' : undefined,
-              },
-            }}
-          />
-        );
-      })}
+      {/* Task-organized conversation */}
+      {taskWithMessages.map(({ task, messages: taskMessages }, index) => (
+        <TaskBlock
+          key={task.task_id}
+          task={task}
+          messages={taskMessages}
+          // Expand only the last task by default
+          defaultExpanded={index === taskWithMessages.length - 1}
+        />
+      ))}
     </div>
   );
 };

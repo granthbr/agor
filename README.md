@@ -7,7 +7,7 @@
 
 **Pronunciation:** "AY-gore"
 
-**Status:** Backend + CLI Complete | UI Integration Next
+**Status:** Backend + CLI Complete | UI Integration In Progress
 **Project:** Open Source (Apache 2.0)
 **Organization:** Tembo
 **Date:** January 2025
@@ -151,12 +151,14 @@ Your Project:
 - Claude Code session import with task extraction
 - UI prototype (React + Ant Design + Storybook)
 - Data architecture (Messages → Tasks event sourcing)
+- UI components (SessionCard, SessionDrawer, ConversationView)
+- Messages API with real-time WebSocket subscriptions
 
 **🚧 In Progress:**
 
+- Full UI ↔ Backend integration (session CRUD, task management)
 - Agent integration framework
-- UI ↔ Backend connection
-- Real-time updates
+- Real-time task state updates
 
 **See [PROJECT.md](PROJECT.md) for detailed roadmap.**
 
@@ -175,15 +177,27 @@ Your Project:
 git clone https://github.com/mistercrunch/agor
 cd agor
 pnpm install
-pnpm build
 ```
 
-### Run the Daemon
+### Development Setup
+
+**Run 3 terminals for full-stack development:**
 
 ```bash
+# Terminal 1: Build @agor/core in watch mode
+cd packages/core
+pnpm dev
+
+# Terminal 2: Run backend daemon (auto-restarts on core changes)
 cd apps/agor-daemon
 pnpm dev  # Starts on http://localhost:3030
+
+# Terminal 3: Run UI dev server
+cd apps/agor-ui
+pnpm dev  # Starts on http://localhost:5173
 ```
+
+**Why 3 terminals?** The `@agor/core` package exports built files from `dist/`. Running `pnpm dev` in `packages/core` watches source files and rebuilds automatically, triggering daemon restarts.
 
 ### Use the CLI
 
@@ -204,12 +218,11 @@ pnpm agor repo add https://github.com/user/repo
 pnpm agor repo worktree add <repo-slug> <worktree-name>
 ```
 
-### Develop the UI
+### Browse UI Components
 
 ```bash
 cd apps/agor-ui
 pnpm storybook  # Component development on :6006
-pnpm dev        # Full app
 ```
 
 **See [CLAUDE.md](CLAUDE.md) for complete developer documentation.**
