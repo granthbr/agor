@@ -79,6 +79,9 @@ export class ClaudePromptService {
   /** Enable token-level streaming from Claude Agent SDK */
   private static readonly ENABLE_TOKEN_STREAMING = true;
 
+  /** Claude model for live execution */
+  private static readonly CLAUDE_MODEL = 'claude-sonnet-4-5-20250929';
+
   constructor(
     private messagesRepo: MessagesRepository,
     private sessionsRepo: SessionRepository,
@@ -386,7 +389,7 @@ export class ClaudePromptService {
       cwd: session.repo.cwd,
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       settingSources: ['user', 'project'], // Load user + project permissions, auto-loads CLAUDE.md
-      model: 'claude-sonnet-4-5-20250929',
+      model: ClaudePromptService.CLAUDE_MODEL,
       pathToClaudeCodeExecutable: getClaudeCodePath(),
       // Allow access to common directories outside CWD (e.g., /tmp)
       additionalDirectories: ['/tmp', '/var/tmp'],

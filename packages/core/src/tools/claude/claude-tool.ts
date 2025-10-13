@@ -55,6 +55,9 @@ export class ClaudeTool implements ITool {
   readonly toolType = 'claude-code' as const;
   readonly name = 'Claude Code';
 
+  /** Claude model used for live execution */
+  private static readonly CLAUDE_MODEL = 'claude-sonnet-4-5-20250929';
+
   private promptService?: ClaudePromptService;
 
   constructor(
@@ -165,26 +168,12 @@ export class ClaudeTool implements ITool {
     const existingMessages = await this.messagesRepo.findBySessionId(sessionId);
     let nextIndex = existingMessages.length;
 
-    // Create user message immediately via FeathersJS service (emits WebSocket event)
-    const userMessage: Message = {
-      message_id: generateId() as MessageID,
-      session_id: sessionId,
-      type: 'user',
-      role: 'user',
-      index: nextIndex++,
-      timestamp: new Date().toISOString(),
-      content_preview: prompt.substring(0, 200),
-      content: prompt,
-      task_id: taskId,
-    };
-
-    await this.messagesService.create(userMessage);
+    // Create user message
+    const userMessage = await this.createUserMessage(sessionId, prompt, taskId, nextIndex++);
 
     // Execute prompt via Agent SDK with streaming
     const assistantMessageIds: MessageID[] = [];
     let capturedAgentSessionId: string | undefined;
-
-    // Track current message being streamed
     let currentMessageId: MessageID | null = null;
     let streamStartTime = Date.now();
     let firstTokenTime: number | null = null;
@@ -195,18 +184,10 @@ export class ClaudeTool implements ITool {
       taskId,
       permissionMode
     )) {
-      // Capture Agent SDK session_id from first message
+      // Capture Agent SDK session_id
       if (!capturedAgentSessionId && event.agentSessionId) {
         capturedAgentSessionId = event.agentSessionId;
-        console.log(
-          `🔑 Captured Agent SDK session_id for Agor session ${sessionId}: ${capturedAgentSessionId}`
-        );
-
-        // Store it in the session for future prompts
-        if (this.sessionsRepo) {
-          await this.sessionsRepo.update(sessionId, { agent_session_id: capturedAgentSessionId });
-          console.log(`💾 Stored Agent SDK session_id in Agor session`);
-        }
+        await this.captureAgentSessionId(sessionId, capturedAgentSessionId);
       }
 
       // Handle partial streaming events (token-level chunks)
@@ -249,34 +230,16 @@ export class ClaudeTool implements ITool {
         // Use existing message ID or generate new one
         const assistantMessageId = currentMessageId || (generateId() as MessageID);
 
-        // Extract text content for preview
-        const textBlocks = event.content.filter(b => b.type === 'text').map(b => b.text || '');
-        const fullTextContent = textBlocks.join('');
-        const contentPreview = fullTextContent.substring(0, 200);
-
-        // Create complete message in DB (triggers WebSocket broadcast)
-        const message: Message = {
-          message_id: assistantMessageId,
-          session_id: sessionId,
-          type: 'assistant',
-          role: 'assistant',
-          index: nextIndex++,
-          timestamp: new Date().toISOString(),
-          content_preview: contentPreview,
-          content: event.content as Message['content'],
-          tool_uses: event.toolUses,
-          task_id: taskId,
-          metadata: {
-            model: 'claude-sonnet-4-5-20250929',
-            tokens: {
-              input: 0, // TODO: Extract from SDK
-              output: 0,
-            },
-          },
-        };
-
-        await this.messagesService.create(message);
-        assistantMessageIds.push(message.message_id);
+        // Create complete message in DB
+        await this.createAssistantMessage(
+          sessionId,
+          assistantMessageId,
+          event.content,
+          event.toolUses,
+          taskId,
+          nextIndex++
+        );
+        assistantMessageIds.push(assistantMessageId);
 
         // Reset for next message
         currentMessageId = null;
@@ -292,35 +255,91 @@ export class ClaudeTool implements ITool {
   }
 
   /**
-   * Chunk text into 5-10 word segments for streaming
-   * Flushes at sentence boundaries (., !, ?, \n\n) or word count threshold
+   * Create user message in database
    * @private
    */
-  private chunkTextForStreaming(text: string): string[] {
-    const chunks: string[] = [];
-    let buffer = '';
-    const words = text.split(/(\s+)/); // Keep whitespace
+  private async createUserMessage(
+    sessionId: SessionID,
+    prompt: string,
+    taskId: TaskID | undefined,
+    nextIndex: number
+  ): Promise<Message> {
+    const userMessage: Message = {
+      message_id: generateId() as MessageID,
+      session_id: sessionId,
+      type: 'user',
+      role: 'user',
+      index: nextIndex,
+      timestamp: new Date().toISOString(),
+      content_preview: prompt.substring(0, 200),
+      content: prompt,
+      task_id: taskId,
+    };
 
-    for (const word of words) {
-      buffer += word;
+    await this.messagesService!.create(userMessage);
+    return userMessage;
+  }
 
-      // Count non-whitespace words in buffer
-      const wordCount = buffer.split(/\s+/).filter(w => w.length > 0).length;
+  /**
+   * Capture and store Agent SDK session_id for conversation continuity
+   * @private
+   */
+  private async captureAgentSessionId(sessionId: SessionID, agentSessionId: string): Promise<void> {
+    console.log(
+      `🔑 Captured Agent SDK session_id for Agor session ${sessionId}: ${agentSessionId}`
+    );
 
-      // Flush if we hit a sentence boundary (with 3+ words) or 10 words
-      const hasSentenceBoundary = /[.!?\n\n]\s*$/.test(buffer.trimEnd());
-      if ((hasSentenceBoundary && wordCount >= 3) || wordCount >= 10) {
-        chunks.push(buffer);
-        buffer = '';
-      }
+    if (this.sessionsRepo) {
+      await this.sessionsRepo.update(sessionId, { agent_session_id: agentSessionId });
+      console.log(`💾 Stored Agent SDK session_id in Agor session`);
     }
+  }
 
-    // Flush remaining
-    if (buffer.trim()) {
-      chunks.push(buffer);
-    }
+  /**
+   * Create complete assistant message in database
+   * @private
+   */
+  private async createAssistantMessage(
+    sessionId: SessionID,
+    messageId: MessageID,
+    content: Array<{
+      type: string;
+      text?: string;
+      id?: string;
+      name?: string;
+      input?: Record<string, unknown>;
+    }>,
+    toolUses: Array<{ id: string; name: string; input: Record<string, unknown> }> | undefined,
+    taskId: TaskID | undefined,
+    nextIndex: number
+  ): Promise<Message> {
+    // Extract text content for preview
+    const textBlocks = content.filter(b => b.type === 'text').map(b => b.text || '');
+    const fullTextContent = textBlocks.join('');
+    const contentPreview = fullTextContent.substring(0, 200);
 
-    return chunks;
+    const message: Message = {
+      message_id: messageId,
+      session_id: sessionId,
+      type: 'assistant',
+      role: 'assistant',
+      index: nextIndex,
+      timestamp: new Date().toISOString(),
+      content_preview: contentPreview,
+      content: content as Message['content'],
+      tool_uses: toolUses,
+      task_id: taskId,
+      metadata: {
+        model: ClaudeTool.CLAUDE_MODEL,
+        tokens: {
+          input: 0, // TODO: Extract from SDK
+          output: 0,
+        },
+      },
+    };
+
+    await this.messagesService!.create(message);
+    return message;
   }
 
   /**
@@ -350,26 +369,11 @@ export class ClaudeTool implements ITool {
     const existingMessages = await this.messagesRepo.findBySessionId(sessionId);
     let nextIndex = existingMessages.length;
 
-    // Create user message immediately via FeathersJS service (emits WebSocket event)
-    const userMessage: Message = {
-      message_id: generateId() as MessageID,
-      session_id: sessionId,
-      type: 'user',
-      role: 'user',
-      index: nextIndex++,
-      timestamp: new Date().toISOString(),
-      content_preview: prompt.substring(0, 200),
-      content: prompt,
-      task_id: taskId, // Link to task immediately
-    };
+    // Create user message
+    const userMessage = await this.createUserMessage(sessionId, prompt, taskId, nextIndex++);
 
-    await this.messagesService.create(userMessage);
-
-    // Execute prompt via Agent SDK with progressive message creation
-    // As each assistant message arrives, create it immediately (sends WebSocket event)
+    // Execute prompt via Agent SDK
     const assistantMessageIds: MessageID[] = [];
-    const inputTokens = 0;
-    const outputTokens = 0;
     let capturedAgentSessionId: string | undefined;
 
     for await (const event of this.promptService.promptSessionStreaming(
@@ -378,18 +382,10 @@ export class ClaudeTool implements ITool {
       taskId,
       permissionMode
     )) {
-      // Capture Agent SDK session_id from first message
+      // Capture Agent SDK session_id
       if (!capturedAgentSessionId && event.agentSessionId) {
         capturedAgentSessionId = event.agentSessionId;
-        console.log(
-          `🔑 Captured Agent SDK session_id for Agor session ${sessionId}: ${capturedAgentSessionId}`
-        );
-
-        // Store it in the session for future prompts
-        if (this.sessionsRepo) {
-          await this.sessionsRepo.update(sessionId, { agent_session_id: capturedAgentSessionId });
-          console.log(`💾 Stored Agent SDK session_id in Agor session`);
-        }
+        await this.captureAgentSessionId(sessionId, capturedAgentSessionId);
       }
 
       // Skip partial events in non-streaming mode
@@ -399,32 +395,16 @@ export class ClaudeTool implements ITool {
 
       // Handle complete messages only
       if (event.type === 'complete' && event.content) {
-        // Generate content preview from text blocks
-        const textBlocks = event.content.filter(b => b.type === 'text').map(b => b.text);
-        const contentPreview = textBlocks.join('').substring(0, 200);
-
-        const message: Message = {
-          message_id: generateId() as MessageID,
-          session_id: sessionId,
-          type: 'assistant',
-          role: 'assistant',
-          index: nextIndex++,
-          timestamp: new Date().toISOString(),
-          content_preview: contentPreview,
-          content: event.content as Message['content'], // ContentBlock[] array
-          tool_uses: event.toolUses,
-          task_id: taskId, // Link to task immediately so UI can display progressively
-          metadata: {
-            model: 'claude-sonnet-4-5-20250929',
-            tokens: {
-              input: inputTokens,
-              output: outputTokens,
-            },
-          },
-        };
-
-        await this.messagesService.create(message);
-        assistantMessageIds.push(message.message_id);
+        const messageId = generateId() as MessageID;
+        await this.createAssistantMessage(
+          sessionId,
+          messageId,
+          event.content,
+          event.toolUses,
+          taskId,
+          nextIndex++
+        );
+        assistantMessageIds.push(messageId);
       }
     }
 
