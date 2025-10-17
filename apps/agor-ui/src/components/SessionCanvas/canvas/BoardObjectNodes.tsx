@@ -35,6 +35,7 @@ interface ZoneNodeData {
   status?: string;
   x: number;
   y: number;
+  trigger?: BoardObject extends { type: 'zone'; trigger?: infer T } ? T : never;
   onUpdate?: (objectId: string, objectData: BoardObject) => void;
 }
 
@@ -87,6 +88,7 @@ const ZoneNodeComponent = ({ data, selected }: { data: ZoneNodeData; selected?: 
     label: data.label,
     color: data.color,
     status: data.status,
+    trigger: data.trigger,
     ...overrides,
   });
 

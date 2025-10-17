@@ -75,6 +75,7 @@ export const useBoardObjects = ({
           status: objectData.status,
           x: objectData.x, // Include position in data for updates
           y: objectData.y,
+          trigger: objectData.type === 'zone' ? objectData.trigger : undefined,
           onUpdate: handleUpdateObject,
         },
       };
