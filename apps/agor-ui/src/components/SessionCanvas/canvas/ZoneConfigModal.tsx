@@ -2,6 +2,7 @@
  * Modal for configuring zone settings (name, triggers, etc.)
  */
 
+import type { ZoneTriggerType } from '@agor/core/types';
 import { Alert, Input, Modal, Select, theme } from 'antd';
 import { useEffect, useId, useState } from 'react';
 import type { BoardObject } from '../../types';
@@ -25,7 +26,7 @@ export const ZoneConfigModal = ({
 }: ZoneConfigModalProps) => {
   const { token } = theme.useToken();
   const [name, setName] = useState(zoneName);
-  const [triggerType, setTriggerType] = useState<'prompt' | 'task' | 'subtask'>('prompt');
+  const [triggerType, setTriggerType] = useState<ZoneTriggerType>('prompt');
   const [triggerText, setTriggerText] = useState('');
   const nameId = useId();
   const triggerTypeId = useId();
@@ -35,16 +36,34 @@ export const ZoneConfigModal = ({
   useEffect(() => {
     if (open) {
       setName(zoneName);
+      // Load existing trigger data if available
+      if (zoneData.type === 'zone' && zoneData.trigger) {
+        setTriggerType(zoneData.trigger.type);
+        setTriggerText(zoneData.trigger.text);
+      } else {
+        setTriggerType('prompt');
+        setTriggerText('');
+      }
     }
-  }, [open, zoneName]);
+  }, [open, zoneName, zoneData]);
 
   const handleSave = () => {
-    // Only update if name changed (triggers are coming soon)
-    if (name !== zoneName && zoneData.type === 'zone') {
-      onUpdate(objectId, {
-        ...zoneData,
-        label: name,
-      });
+    if (zoneData.type === 'zone') {
+      const hasChanges = name !== zoneName || triggerText.trim() !== (zoneData.trigger?.text || '');
+
+      if (hasChanges) {
+        onUpdate(objectId, {
+          ...zoneData,
+          label: name,
+          // Only save trigger if text is provided
+          trigger: triggerText.trim()
+            ? {
+                type: triggerType,
+                text: triggerText.trim(),
+              }
+            : undefined, // Remove trigger if text is empty
+        });
+      }
     }
     onCancel();
   };
@@ -80,14 +99,6 @@ export const ZoneConfigModal = ({
           size="large"
         />
       </div>
-
-      <Alert
-        message="Triggers - Coming Soon"
-        description="Zone triggers will allow you to automatically execute actions when sessions are dropped into this zone. This feature is currently under development."
-        type="info"
-        showIcon
-        style={{ marginBottom: 24 }}
-      />
 
       <div style={{ marginBottom: 16 }}>
         <label

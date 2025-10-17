@@ -21,6 +21,21 @@ export interface TextBoardObject {
 }
 
 /**
+ * Zone trigger types
+ */
+export type ZoneTriggerType = 'prompt' | 'task' | 'subtask';
+
+/**
+ * Zone trigger configuration
+ */
+export interface ZoneTrigger {
+  /** Type of trigger action */
+  type: ZoneTriggerType;
+  /** The prompt text or task description to execute */
+  text: string;
+}
+
+/**
  * Zone rectangle object (for organizing sessions visually)
  */
 export interface ZoneBoardObject {
@@ -32,6 +47,8 @@ export interface ZoneBoardObject {
   label: string;
   color?: string;
   status?: string;
+  /** Trigger configuration for sessions dropped into this zone */
+  trigger?: ZoneTrigger;
 }
 
 /**
