@@ -24,8 +24,9 @@ This directory contains modular knowledge files that document Agor's concepts, a
 - **[agent-integration.md](concepts/agent-integration.md)** - Claude Agent SDK integration, session continuity, live execution
 - **[auth.md](concepts/auth.md)** - Authentication & authorization, anonymous-first, JWT/Local strategies, user attribution
 - **[multiplayer.md](concepts/multiplayer.md)** - Real-time collaboration, facepile, cursor swarm, presence indicators
-- **[board-objects.md](concepts/board-objects.md)** - Board layout system, zones, session pinning, visual organization
+- **[board-objects.md](concepts/board-objects.md)** - Board layout system, zones, session pinning, zone triggers with Handlebars
 - **[mcp-integration.md](concepts/mcp-integration.md)** - MCP server management, CRUD UI/CLI, session-level selection
+- **[permissions.md](concepts/permissions.md)** - Permission system, task-centric approval, audit trails
 
 ### Explorations (Work in Progress)
 
@@ -45,6 +46,10 @@ Experimental ideas and designs not yet crystallized into concepts. These represe
 
 - **[single-package.md](explorations/single-package.md)** - Distribution strategy (bundled CLI + daemon + UI into single npm package)
 - **[docs-website.md](explorations/docs-website.md)** - Documentation website with Nextra (user guides, REST API reference, MDX support)
+
+**Agent SDK Research:**
+
+- **[gemini.md](explorations/gemini.md)** - Google Gemini CLI SDK discovery and integration analysis
 
 **Lifecycle:** `explorations/` → `concepts/` when design is validated and ready to be official
 
