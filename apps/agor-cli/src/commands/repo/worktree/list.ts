@@ -85,8 +85,7 @@ export default class WorktreeList extends Command {
       }
 
       // Fetch repos
-      // biome-ignore lint/suspicious/noExplicitAny: Feathers service methods not properly typed
-      const result = await (reposService as any).find({ query });
+      const result = await reposService.find({ query });
       const repos = Array.isArray(result) ? result : (result as Paginated<Repo>).data;
 
       if (!repos || repos.length === 0) {

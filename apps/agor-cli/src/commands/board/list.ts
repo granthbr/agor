@@ -18,8 +18,7 @@ export default class BoardList extends Command {
 
     try {
       // Fetch boards
-      // biome-ignore lint/suspicious/noExplicitAny: FeathersJS service typing limitation
-      const result = await (client.service('boards') as any).find();
+      const result = await client.service('boards').find();
       const boards = (Array.isArray(result) ? result : result.data) as Board[];
 
       if (boards.length === 0) {

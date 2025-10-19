@@ -40,8 +40,7 @@ export default class UserDelete extends Command {
       const client = createClient();
 
       // Find user by email or ID
-      // biome-ignore lint/suspicious/noExplicitAny: FeathersJS service typing issue
-      const usersService = client.service('users') as any;
+      const usersService = client.service('users');
       const result = await usersService.find();
       const users = (Array.isArray(result) ? result : result.data) as User[];
 

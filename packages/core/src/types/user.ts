@@ -1,6 +1,15 @@
 import type { UserID } from './id';
 
 /**
+ * User role types
+ * - owner: Full system access, can manage all users and settings
+ * - admin: Can manage most resources, cannot modify owner
+ * - member: Standard user access, can create and manage own sessions
+ * - viewer: Read-only access
+ */
+export type UserRole = 'owner' | 'admin' | 'member' | 'viewer';
+
+/**
  * User type - Authentication and authorization
  */
 export interface User {
@@ -8,7 +17,7 @@ export interface User {
   email: string;
   name?: string;
   emoji?: string; // User emoji for visual identity (like boards)
-  role: 'owner' | 'admin' | 'member' | 'viewer';
+  role: UserRole;
   avatar?: string;
   preferences?: Record<string, unknown>;
   created_at: Date;
@@ -23,7 +32,7 @@ export interface CreateUserInput {
   password: string;
   name?: string;
   emoji?: string;
-  role?: 'owner' | 'admin' | 'member' | 'viewer';
+  role?: UserRole;
 }
 
 /**
@@ -34,7 +43,7 @@ export interface UpdateUserInput {
   password?: string;
   name?: string;
   emoji?: string;
-  role?: 'owner' | 'admin' | 'member' | 'viewer';
+  role?: UserRole;
   avatar?: string;
   preferences?: Record<string, unknown>;
 }

@@ -32,8 +32,7 @@ export default class BoardAddSession extends Command {
 
     try {
       // Find board by ID or slug
-      // biome-ignore lint/suspicious/noExplicitAny: FeathersJS service typing limitation
-      const boardsResult = await (client.service('boards') as any).find();
+      const boardsResult = await client.service('boards').find();
       const boards = (Array.isArray(boardsResult) ? boardsResult : boardsResult.data) as Board[];
 
       const board = boards.find(
@@ -50,8 +49,7 @@ export default class BoardAddSession extends Command {
       }
 
       // Find session by short or full ID
-      // biome-ignore lint/suspicious/noExplicitAny: FeathersJS service typing limitation
-      const sessionsResult = await (client.service('sessions') as any).find();
+      const sessionsResult = await client.service('sessions').find();
       const sessions = (
         Array.isArray(sessionsResult) ? sessionsResult : sessionsResult.data
       ) as Session[];
@@ -74,8 +72,7 @@ export default class BoardAddSession extends Command {
       }
 
       // Add session to board
-      // biome-ignore lint/suspicious/noExplicitAny: FeathersJS service typing limitation
-      const updatedBoard = (await (client.service('boards') as any).patch(board.board_id, {
+      const updatedBoard = (await client.service('boards').patch(board.board_id, {
         sessions: [...board.sessions, session.session_id],
       })) as Board;
 

@@ -145,8 +145,7 @@ export default class McpAdd extends Command {
       // Call daemon API
       const client = createClient(daemonUrl);
 
-      // biome-ignore lint/suspicious/noExplicitAny: FeathersJS service typing limitation
-      const server = (await (client.service('mcp-servers') as any).create(data)) as MCPServer;
+      const server = (await client.service('mcp-servers').create(data)) as MCPServer;
 
       this.log(`${chalk.green('✓')} MCP server added`);
       this.log('');

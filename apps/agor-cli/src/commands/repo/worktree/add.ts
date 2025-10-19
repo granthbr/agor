@@ -79,8 +79,7 @@ export default class WorktreeAdd extends Command {
       const reposService = client.service('repos');
 
       // Fetch repo by slug
-      // biome-ignore lint/suspicious/noExplicitAny: Feathers service methods not properly typed
-      const repos = await (reposService as any).find({
+      const repos = await reposService.find({
         query: { slug: args.repoSlug, $limit: 1 },
       });
 
@@ -146,16 +145,13 @@ export default class WorktreeAdd extends Command {
       }
 
       // Call daemon API to create worktree
-      // biome-ignore lint/suspicious/noExplicitAny: Dynamic Feathers service route not in ServiceTypes
-      const updatedRepo =
-        (await // biome-ignore lint/suspicious/noExplicitAny: Feathers service typing limitation for custom routes
-        (client.service(`repos/${repo.repo_id}/worktrees` as any) as any).create({
-          name: args.name,
-          ref,
-          createBranch,
-          pullLatest,
-          sourceBranch,
-        })) as Repo;
+      const updatedRepo = await client.service('repos').createWorktree(repo.repo_id, {
+        name: args.name,
+        ref,
+        createBranch,
+        pullLatest,
+        sourceBranch,
+      });
 
       this.log(`${chalk.green('✓')} Worktree created and registered`);
 

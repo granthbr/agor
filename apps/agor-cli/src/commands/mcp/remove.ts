@@ -51,8 +51,7 @@ export default class McpRemove extends Command {
 
       // If it looks like a name (not a UUID), try to find by name
       if (!args.id.match(/^[0-9a-f]{8}/i)) {
-        // biome-ignore lint/suspicious/noExplicitAny: FeathersJS service typing limitation
-        const result = await (client.service('mcp-servers') as any).find({
+        const result = await client.service('mcp-servers').find({
           query: { $limit: 100 },
         });
         const servers = Array.isArray(result) ? result : result.data;
@@ -82,8 +81,7 @@ export default class McpRemove extends Command {
       }
 
       // Delete the server
-      // biome-ignore lint/suspicious/noExplicitAny: FeathersJS service typing limitation
-      await (client.service('mcp-servers') as any).remove(serverId);
+      await client.service('mcp-servers').remove(serverId);
 
       this.log('');
       this.log(`${chalk.green('✓')} MCP server removed: ${args.id}`);

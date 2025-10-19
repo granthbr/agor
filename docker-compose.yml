@@ -1,0 +1,29 @@
+services:
+  agor-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    # No container_name - allows multiple instances via docker compose -p flag
+    ports:
+      # Only expose UI port (configurable via PORT env var)
+      - '${PORT:-5173}:${PORT:-5173}'
+    environment:
+      # Daemon configuration (internal only, not exposed to host)
+      - NODE_ENV=development
+
+      # UI configuration
+      - VITE_PORT=${PORT:-5173}
+      # UI connects to daemon via localhost (inside container)
+      - VITE_DAEMON_URL=http://localhost:3030
+    volumes:
+      # Mount entire repo for hot-reload
+      - .:/app
+      # Persist database/config (unique per project name)
+      - agor-data:/root/.agor
+    stdin_open: true
+    tty: true
+
+volumes:
+  # Named volume - unique per docker-compose project
+  # Use -p flag to create separate volumes per worktree
+  agor-data:

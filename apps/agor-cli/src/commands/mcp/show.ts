@@ -31,12 +31,10 @@ export default class McpShow extends Command {
       let server: MCPServer | null = null;
 
       try {
-        // biome-ignore lint/suspicious/noExplicitAny: FeathersJS service typing limitation
-        server = (await (client.service('mcp-servers') as any).get(args.id)) as MCPServer;
+        server = (await client.service('mcp-servers').get(args.id)) as MCPServer;
       } catch {
         // If not found by ID, try to find by name
-        // biome-ignore lint/suspicious/noExplicitAny: FeathersJS service typing limitation
-        const result = await (client.service('mcp-servers') as any).find({
+        const result = await client.service('mcp-servers').find({
           query: { $limit: 1 },
         });
         const servers = (Array.isArray(result) ? result : result.data) as MCPServer[];

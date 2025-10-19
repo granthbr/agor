@@ -132,6 +132,26 @@ export interface ReposService extends AgorService<Repo> {
    * Clone a repository and register it
    */
   clone(data: { url: string; name?: string }, params?: Params): Promise<Repo>;
+
+  /**
+   * Create a git worktree for a repository
+   */
+  createWorktree(
+    id: string,
+    data: {
+      name: string;
+      ref: string;
+      createBranch?: boolean;
+      pullLatest?: boolean;
+      sourceBranch?: string;
+    },
+    params?: Params
+  ): Promise<Repo>;
+
+  /**
+   * Remove a git worktree
+   */
+  removeWorktree(id: string, name: string, params?: Params): Promise<Repo>;
 }
 
 /**

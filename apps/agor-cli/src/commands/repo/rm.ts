@@ -60,12 +60,10 @@ export default class RepoRm extends Command {
 
       try {
         // Try as ID first
-        // biome-ignore lint/suspicious/noExplicitAny: Feathers service methods not properly typed
-        repo = await (reposService as any).get(args.id);
+        repo = await reposService.get(args.id);
       } catch {
         // Try as slug
-        // biome-ignore lint/suspicious/noExplicitAny: Feathers service methods not properly typed
-        const result = await (reposService as any).find({ query: { slug: args.id } });
+        const result = await reposService.find({ query: { slug: args.id } });
         const repos = Array.isArray(result) ? result : result.data;
 
         if (repos.length > 0) {
@@ -125,8 +123,7 @@ export default class RepoRm extends Command {
       }
 
       // Delete from database
-      // biome-ignore lint/suspicious/noExplicitAny: Feathers service methods not properly typed
-      await (reposService as any).remove(repo.repo_id);
+      await reposService.remove(repo.repo_id);
 
       this.log(`${chalk.green('✓')} Repository removed from database`);
 

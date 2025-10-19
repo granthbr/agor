@@ -46,8 +46,7 @@ export default class McpList extends Command {
       if (flags.enabled) query.enabled = true;
 
       // Fetch MCP servers
-      // biome-ignore lint/suspicious/noExplicitAny: FeathersJS service typing limitation
-      const result = await (client.service('mcp-servers') as any).find({ query });
+      const result = await client.service('mcp-servers').find({ query });
       const servers = (Array.isArray(result) ? result : result.data) as MCPServer[];
 
       if (servers.length === 0) {

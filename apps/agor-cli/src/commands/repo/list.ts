@@ -66,8 +66,7 @@ export default class RepoList extends Command {
 
       // Fetch repos
       const reposService = client.service('repos');
-      // biome-ignore lint/suspicious/noExplicitAny: Feathers service methods not properly typed
-      const result = await (reposService as any).find({ query });
+      const result = await reposService.find({ query });
       const isPaginated = !Array.isArray(result);
       const repos = Array.isArray(result) ? result : (result as Paginated<Repo>).data;
       const total = isPaginated ? (result as Paginated<Repo>).total : repos.length;

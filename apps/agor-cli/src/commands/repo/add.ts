@@ -74,11 +74,10 @@ export default class RepoAdd extends Command {
       // Call daemon API to clone repo
       const client = createClient(daemonUrl);
 
-      // biome-ignore lint/suspicious/noExplicitAny: Dynamic Feathers service route not in ServiceTypes
-      const repo = (await (client.service('repos/clone' as any) as any).create({
+      const repo = await client.service('repos').clone({
         url: args.url,
-        slug: slug,
-      })) as Repo;
+        name: slug,
+      });
 
       this.log(`${chalk.green('✓')} Repository cloned and registered`);
       this.log(chalk.dim(`  Path: ${repo.local_path}`));

@@ -3,6 +3,7 @@
  */
 
 import { createClient } from '@agor/core/api';
+import type { CreateUserInput, UserRole } from '@agor/core/types';
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
@@ -98,13 +99,13 @@ export default class UserCreate extends Command {
       // Create user
       this.log('');
       this.log(chalk.gray('Creating user...'));
-      // biome-ignore lint/suspicious/noExplicitAny: FeathersJS service typing issue
-      const user = await (client.service('users') as any).create({
+      const userData: CreateUserInput = {
         email,
         password,
         name: name || undefined,
-        role: flags.role as 'owner' | 'admin' | 'member' | 'viewer',
-      });
+        role: flags.role as UserRole,
+      };
+      const user = await client.service('users').create(userData);
 
       this.log(`${chalk.green('✓')} User created successfully`);
       this.log('');
