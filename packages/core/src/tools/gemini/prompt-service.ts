@@ -442,10 +442,9 @@ export class GeminiPromptService {
       throw new Error(`Session ${sessionId} not found`);
     }
 
+    // TODO: Update to use worktree path after worktree-centric refactor
     // Determine working directory
-    const workingDirectory = session.repo
-      ? (session.repo as { local_path?: string }).local_path || process.cwd()
-      : process.cwd();
+    const workingDirectory = process.cwd(); // Temporary fallback
 
     // Get model from session config
     const model = (session.model_config?.model as GeminiModel) || DEFAULT_GEMINI_MODEL;

@@ -236,7 +236,8 @@ approval_policy = "${approvalPolicy}"
     }
 
     console.log(`🔍 [Codex] Starting prompt execution for session ${sessionId.substring(0, 8)}`);
-    console.log(`   Working directory: ${session.repo.cwd}`);
+    // TODO: Update to use worktree path after worktree-centric refactor
+    // console.log(`   Working directory: ${session.repo.cwd}`);
     console.log(`   Permission mode: ${permissionMode || 'not specified (will use default)'}`);
     console.log(`   Existing thread ID: ${session.sdk_session_id || 'none (will create new)'}`);
 
@@ -266,9 +267,10 @@ approval_policy = "${approvalPolicy}"
 
     console.log(`   Configured: sandboxMode=${sandboxMode}, approval_policy via config.toml`);
 
+    // TODO: Update to use worktree path after worktree-centric refactor
     // Build thread options with sandbox mode
     const threadOptions = {
-      workingDirectory: session.repo.cwd,
+      workingDirectory: process.cwd(), // Temporary fallback
       skipGitRepoCheck: false,
       sandboxMode,
     };

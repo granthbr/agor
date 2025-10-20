@@ -7,7 +7,7 @@
  * 3. Slug + worktree: anthropics/agor:feat-auth
  */
 
-import type { RepoSlug, SessionRepoContext, UUID, WorktreeName } from '../types';
+import type { RepoSlug, UUID, WorktreeName } from '../types';
 
 /**
  * Parsed repo reference
@@ -158,25 +158,21 @@ export async function resolveRepoReference(ref: string): Promise<{
 /**
  * Format repo reference for display
  *
- * @param context - SessionRepoContext
+ * @param slug - Repository slug
+ * @param worktreeName - Optional worktree name
  * @returns Formatted reference string
  *
  * @example
- * formatRepoReference({ repo_slug: 'anthropics/agor', worktree_name: 'main', ... })
+ * formatRepoReference('anthropics/agor', 'main')
  * // => 'anthropics/agor:main'
  *
  * @example
- * formatRepoReference({ cwd: '/Users/max/code/agor', managed_worktree: false, ... })
- * // => '/Users/max/code/agor'
+ * formatRepoReference('anthropics/agor')
+ * // => 'anthropics/agor'
  */
-export function formatRepoReference(context: SessionRepoContext): string {
-  if (context.managed_worktree && context.repo_slug && context.worktree_name) {
-    return `${context.repo_slug}:${context.worktree_name}`;
+export function formatRepoReference(slug: RepoSlug, worktreeName?: WorktreeName): string {
+  if (worktreeName) {
+    return `${slug}:${worktreeName}`;
   }
-
-  if (context.repo_slug) {
-    return context.repo_slug;
-  }
-
-  return context.cwd;
+  return slug;
 }
