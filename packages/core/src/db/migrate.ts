@@ -71,7 +71,7 @@ async function createInitialSchema(db: Database): Promise<void> {
         updated_at INTEGER,
         created_by TEXT NOT NULL DEFAULT 'anonymous',
         status TEXT NOT NULL CHECK(status IN ('idle', 'running', 'completed', 'failed')),
-        agent TEXT NOT NULL CHECK(agent IN ('claude-code', 'cursor', 'codex', 'gemini')),
+        agentic_tool TEXT NOT NULL CHECK(agentic_tool IN ('claude-code', 'cursor', 'codex', 'gemini')),
         board_id TEXT,
         parent_session_id TEXT,
         forked_from_session_id TEXT,
@@ -84,7 +84,7 @@ async function createInitialSchema(db: Database): Promise<void> {
     `);
 
     await db.run(sql`
-      CREATE INDEX IF NOT EXISTS sessions_agent_idx ON sessions(agent)
+      CREATE INDEX IF NOT EXISTS sessions_agentic_tool_idx ON sessions(agentic_tool)
     `);
 
     await db.run(sql`
@@ -204,6 +204,7 @@ async function createInitialSchema(db: Database): Promise<void> {
         email TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
         name TEXT,
+        emoji TEXT,
         role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('owner', 'admin', 'member', 'viewer')),
         data TEXT NOT NULL
       )
@@ -211,6 +212,83 @@ async function createInitialSchema(db: Database): Promise<void> {
 
     await db.run(sql`
       CREATE INDEX IF NOT EXISTS users_email_idx ON users(email)
+    `);
+
+    // MCP Servers table
+    await db.run(sql`
+      CREATE TABLE IF NOT EXISTS mcp_servers (
+        mcp_server_id TEXT PRIMARY KEY,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER,
+        name TEXT NOT NULL,
+        transport TEXT NOT NULL CHECK(transport IN ('stdio', 'http', 'sse')),
+        scope TEXT NOT NULL CHECK(scope IN ('global', 'team', 'repo', 'session')),
+        enabled INTEGER NOT NULL DEFAULT 1,
+        owner_user_id TEXT,
+        team_id TEXT,
+        repo_id TEXT,
+        session_id TEXT,
+        source TEXT NOT NULL CHECK(source IN ('user', 'imported', 'agor')),
+        data TEXT NOT NULL,
+        FOREIGN KEY (repo_id) REFERENCES repos(repo_id) ON DELETE CASCADE,
+        FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+      )
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS mcp_servers_name_idx ON mcp_servers(name)
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS mcp_servers_scope_idx ON mcp_servers(scope)
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS mcp_servers_owner_idx ON mcp_servers(owner_user_id)
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS mcp_servers_team_idx ON mcp_servers(team_id)
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS mcp_servers_repo_idx ON mcp_servers(repo_id)
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS mcp_servers_session_idx ON mcp_servers(session_id)
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS mcp_servers_enabled_idx ON mcp_servers(enabled)
+    `);
+
+    // Session-MCP Servers relationship table
+    await db.run(sql`
+      CREATE TABLE IF NOT EXISTS session_mcp_servers (
+        session_id TEXT NOT NULL,
+        mcp_server_id TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        added_at INTEGER NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
+        FOREIGN KEY (mcp_server_id) REFERENCES mcp_servers(mcp_server_id) ON DELETE CASCADE
+      )
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS session_mcp_servers_pk ON session_mcp_servers(session_id, mcp_server_id)
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS session_mcp_servers_session_idx ON session_mcp_servers(session_id)
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS session_mcp_servers_server_idx ON session_mcp_servers(mcp_server_id)
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS session_mcp_servers_enabled_idx ON session_mcp_servers(session_id, enabled)
     `);
   } catch (error) {
     throw new MigrationError(

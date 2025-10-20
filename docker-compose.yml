@@ -5,7 +5,9 @@ services:
       dockerfile: Dockerfile.dev
     # No container_name - allows multiple instances via docker compose -p flag
     ports:
-      # Only expose UI port (configurable via PORT env var)
+      # Expose daemon port (so browser can connect)
+      - '3030:3030'
+      # Expose UI port (configurable via PORT env var)
       - '${PORT:-5173}:${PORT:-5173}'
     environment:
       # Daemon configuration (internal only, not exposed to host)
@@ -15,6 +17,11 @@ services:
       - VITE_PORT=${PORT:-5173}
       # UI connects to daemon via localhost (inside container)
       - VITE_DAEMON_URL=http://localhost:3030
+
+      # Pass through API keys from host (if set)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     volumes:
       # Mount entire repo for hot-reload
       - .:/app

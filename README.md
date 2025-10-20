@@ -178,26 +178,59 @@ Additional visuals to consider:
 
 ## 🛠️ Quick Start
 
+### Docker (Recommended)
+
+**One command to run everything:**
+
+```bash
+git clone https://github.com/mistercrunch/agor
+cd agor
+docker compose up
+```
+
+- **UI:** http://localhost:5173
+- **Login:** admin@agor.live / admin
+- **Hot-reload enabled** — edit source files and see changes instantly
+
+**For multiple worktrees/branches:**
+
+```bash
+# Main branch
+docker compose -p main up
+
+# Feature branch (different port, isolated database)
+cd ../agor-feature-branch
+PORT=5174 docker compose -p feature up
+```
+
+See [DOCKER.md](DOCKER.md) for full guide.
+
+### Local Development (Without Docker)
+
 ```bash
 git clone https://github.com/mistercrunch/agor
 cd agor
 pnpm install
-pnpm agor init
-```
 
-**Run the stack:**
+# Initialize database
+cd packages/core && pnpm exec tsx src/db/scripts/setup-db.ts
 
-```bash
-# Daemon (REST + WebSocket)
+# Terminal 1: Daemon
 cd apps/agor-daemon && pnpm dev  # :3030
 
-# UI (React + Vite)
+# Terminal 2: UI
 cd apps/agor-ui && pnpm dev      # :5173
 ```
+
+### Import Sessions
 
 Import a Claude Code session and visualize it instantly:
 
 ```bash
+# Via Docker
+docker compose exec agor-dev pnpm agor session load-claude <session-id>
+
+# Via local CLI
 pnpm agor session load-claude <session-id>
 ```
 

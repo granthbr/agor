@@ -1,16 +1,18 @@
 # Docker Development Guide
 
-**TL;DR:** Run `docker compose up` in any worktree. Use `PORT` env var to avoid conflicts.
+**TL;DR:** Run `docker compose -p <project-name> up` in any worktree. Use unique project name per worktree.
 
 ```bash
 # Worktree 1
-cd ~/code/agor-main
-docker compose up  # UI on port 5173
+cd ~/worktrees/agor-main
+docker compose -p agor-main up  # UI: http://localhost:5173
 
-# Worktree 2
-cd ~/code/agor-feature
-PORT=5174 docker compose up  # UI on port 5174
+# Worktree 2 (different project name = different database)
+cd ~/worktrees/agor-feature-x
+PORT=5174 docker compose -p agor-feature-x up  # UI: http://localhost:5174
 ```
+
+**Important:** Use `-p` flag with unique name per worktree to isolate databases!
 
 ## Quick Start
 
@@ -35,34 +37,48 @@ PORT=5174 docker compose up
 
 ### Multiple Instances (Different Worktrees)
 
-**Recommended workflow:** Use `-p` flag to create isolated instances
+**Use unique `-p` project name per worktree:**
 
 ```bash
 # Worktree 1 (main branch)
-cd ~/code/agor-main
-docker compose -p agor-main up                  # UI: http://localhost:5173
+cd ~/worktrees/agor-main
+docker compose -p agor-main up              # UI: http://localhost:5173
 
 # Worktree 2 (feature branch)
-cd ~/code/agor-feature-x
-PORT=5174 docker compose -p agor-feature-x up   # UI: http://localhost:5174
+cd ~/worktrees/agor-feature-x
+PORT=5174 docker compose -p feature-x up    # UI: http://localhost:5174
 
 # Worktree 3 (another feature)
-cd ~/code/agor-feature-y
-PORT=5175 docker compose -p agor-feature-y up   # UI: http://localhost:5175
+cd ~/worktrees/agor-feature-y
+PORT=5175 docker compose -p feature-y up    # UI: http://localhost:5175
 ```
 
-**The `-p` (project name) flag is important because:**
+**How it works:**
 
-- Creates unique database volume per project: `agor-main_agor-data`, `agor-feature-x_agor-data`, etc.
-- Without it, all instances would share the same database (conflicts!)
+- The `-p` flag sets the project name (used for volume naming)
+- `agor-main` → volume: `agor-main_agor-data`
+- `feature-x` → volume: `feature-x_agor-data`
+- Each project name = isolated database ✅
 
 **Each worktree gets:**
 
-- Its own source code (mounted from that worktree)
-- Its own database volume (isolated data)
-- Its own UI port (no conflicts)
+- Its own source code (mounted from that directory)
+- Its own database volume (named `<project>_agor-data`)
+- Its own UI port (via `PORT` env var)
 
 ## Architecture
+
+### Build Context (.dockerignore)
+
+The `.dockerignore` file is aligned with `.gitignore` to exclude:
+
+- `node_modules/` (rebuilt in container)
+- `dist/` and build artifacts
+- `.env` files
+- `.agor/` data directory (uses volume instead)
+- IDE and OS files
+
+**Important**: `.dockerignore` does NOT exclude markdown files, so `CLAUDE.md` and `context/` docs are copied into the image for AI agent integration.
 
 ### Single Container Design
 
@@ -115,12 +131,15 @@ Example for 3 worktrees:
 
 ```yaml
 volumes:
-  - ./apps:/app/apps # Daemon & UI & CLI source
-  - ./packages:/app/packages # Core packages
-  - ./context:/app/context # Documentation
+  - .:/app # Mount entire repo for hot-reload
 ```
 
-**Changes to these files trigger auto-reload!**
+**How it works:**
+
+- **Build time**: Docker copies repo (excluding `.dockerignore` entries) and installs `node_modules`
+- **Run time**: Volume mount overlays your local repo onto `/app`, giving you live hot-reload
+- `node_modules` persists from build (not overwritten by mount)
+- Changes to any source files trigger auto-reload!
 
 ### Data Persistence
 
@@ -149,15 +168,6 @@ docker exec -it agor-dev sh
 ls -la /root/.agor
 ```
 
-### Node Modules (Optimization)
-
-```yaml
-volumes:
-  - /app/node_modules # Exclude from mount
-```
-
-This prevents host `node_modules` from overwriting container's installed dependencies.
-
 ## Common Commands
 
 ```bash
@@ -181,27 +191,52 @@ docker exec -it agor-dev sh
 
 # Full cleanup (removes database!)
 docker compose down -v
+
+# Or with project name
+docker compose -p main down -v
 ```
 
 ## Environment Variables
 
 ### Available Variables
 
-| Variable   | Default       | Description                          |
-| ---------- | ------------- | ------------------------------------ |
-| `PORT`     | `5173`        | UI port (exposed to host)            |
-| `NODE_ENV` | `development` | Node environment (set automatically) |
+| Variable            | Default | Description                              |
+| ------------------- | ------- | ---------------------------------------- |
+| `PORT`              | `5173`  | UI port (exposed to host)                |
+| `ANTHROPIC_API_KEY` | -       | Anthropic API key (passed from host)     |
+| `OPENAI_API_KEY`    | -       | OpenAI API key (passed from host)        |
+| `GEMINI_API_KEY`    | -       | Google Gemini API key (passed from host) |
 
 ### Setting Variables
 
-```bash
-# Command line
-PORT=8080 docker compose up
+**Option 1: Export in shell**
 
-# Or use .env file
-echo "PORT=8080" > .env
-docker compose up
+```bash
+# Set API keys once
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...
+export GEMINI_API_KEY=...
+
+# Run docker compose (keys are passed through)
+PORT=5174 docker compose -p agor-feature up
 ```
+
+**Option 2: Use .env file**
+
+```bash
+# Create .env file
+cat > .env <<EOF
+PORT=5174
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=...
+EOF
+
+# Run docker compose
+docker compose -p agor-feature up
+```
+
+**Note:** Each Docker instance gets a fresh database. API keys are inherited from host environment, but no other config is shared.
 
 ## Troubleshooting
 

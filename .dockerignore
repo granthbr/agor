@@ -42,10 +42,8 @@ Dockerfile*
 docker-compose*.yml
 .dockerignore
 
-# Documentation (excluding context/)
-README.md
-*.md
-!context/**/*.md
-
 # Agor data (will be mounted as volume)
 .agor
+
+# Claude Code sessions (user-specific)
+.claude

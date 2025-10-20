@@ -2,25 +2,23 @@
 # Supports hot-reload for both daemon and UI
 FROM node:20-slim
 
+# Install system dependencies
+RUN apt-get update && apt-get install -y sqlite3 && rm -rf /var/lib/apt/lists/*
+
 # Install pnpm
 RUN npm install -g pnpm@9.15.1
 
 # Set working directory
 WORKDIR /app
 
-# Copy package files for dependency installation
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/agor-daemon/package.json ./apps/agor-daemon/
-COPY apps/agor-ui/package.json ./apps/agor-ui/
-COPY apps/agor-cli/package.json ./apps/agor-cli/
-COPY packages/core/package.json ./packages/core/
-COPY packages/drizzle-schema/package.json ./packages/drizzle-schema/
+# Copy entire repo (respects .dockerignore)
+COPY . .
+
+# Copy entrypoint script to /usr/local/bin and make executable
+RUN cp docker-entrypoint.sh /usr/local/bin/ && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
-
-# Copy source code
-COPY . .
 
 # Create .agor directory for database and config
 RUN mkdir -p /root/.agor
@@ -28,6 +26,5 @@ RUN mkdir -p /root/.agor
 # Expose UI port only (daemon is internal)
 EXPOSE ${VITE_PORT:-5173}
 
-# Default command: run both daemon and UI in dev mode
-# Daemon runs on internal port 3030, UI on configurable VITE_PORT
-CMD ["sh", "-c", "pnpm --filter @agor/daemon dev & pnpm --filter agor-ui dev --host 0.0.0.0 --port ${VITE_PORT:-5173}"]
+# Use entrypoint script to start both processes
+ENTRYPOINT ["docker-entrypoint.sh"]
