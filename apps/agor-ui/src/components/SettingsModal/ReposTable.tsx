@@ -74,7 +74,7 @@ export const ReposTable: React.FC<ReposTableProps> = ({ repos, onCreate, onDelet
   };
 
   return (
-    <div style={{ padding: '0 24px' }}>
+    <div>
       <div
         style={{
           marginBottom: 16,

@@ -99,16 +99,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     ? sessions.filter(s => s.worktree_id === selectedWorktree.worktree_id)
     : [];
   return (
-    <Modal
-      title="Settings"
-      open={open}
-      onCancel={onClose}
-      footer={null}
-      width={900}
-      styles={{
-        body: { padding: '24px 0' },
-      }}
-    >
+    <Modal title="Settings" open={open} onCancel={onClose} footer={null} width={900}>
       <Tabs
         defaultActiveKey="boards"
         items={[
@@ -116,54 +107,66 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             key: 'boards',
             label: 'Boards',
             children: (
-              <BoardsTable
-                boards={boards}
-                onCreate={onCreateBoard}
-                onUpdate={onUpdateBoard}
-                onDelete={onDeleteBoard}
-              />
+              <div style={{ padding: '0 24px' }}>
+                <BoardsTable
+                  boards={boards}
+                  onCreate={onCreateBoard}
+                  onUpdate={onUpdateBoard}
+                  onDelete={onDeleteBoard}
+                />
+              </div>
             ),
           },
           {
             key: 'repos',
             label: 'Repositories',
-            children: <ReposTable repos={repos} onCreate={onCreateRepo} onDelete={onDeleteRepo} />,
+            children: (
+              <div style={{ padding: '0 24px' }}>
+                <ReposTable repos={repos} onCreate={onCreateRepo} onDelete={onDeleteRepo} />
+              </div>
+            ),
           },
           {
             key: 'worktrees',
             label: 'Worktrees',
             children: (
-              <WorktreesTable
-                worktrees={worktrees}
-                repos={repos}
-                onDelete={onDeleteWorktree}
-                onCreate={onCreateWorktree}
-                onRowClick={handleWorktreeRowClick}
-              />
+              <div style={{ padding: '0 24px' }}>
+                <WorktreesTable
+                  worktrees={worktrees}
+                  repos={repos}
+                  onDelete={onDeleteWorktree}
+                  onCreate={onCreateWorktree}
+                  onRowClick={handleWorktreeRowClick}
+                />
+              </div>
             ),
           },
           {
             key: 'mcp',
             label: 'MCP Servers',
             children: (
-              <MCPServersTable
-                mcpServers={mcpServers}
-                onCreate={onCreateMCPServer}
-                onUpdate={onUpdateMCPServer}
-                onDelete={onDeleteMCPServer}
-              />
+              <div style={{ padding: '0 24px' }}>
+                <MCPServersTable
+                  mcpServers={mcpServers}
+                  onCreate={onCreateMCPServer}
+                  onUpdate={onUpdateMCPServer}
+                  onDelete={onDeleteMCPServer}
+                />
+              </div>
             ),
           },
           {
             key: 'users',
             label: 'Users',
             children: (
-              <UsersTable
-                users={users}
-                onCreate={onCreateUser}
-                onUpdate={onUpdateUser}
-                onDelete={onDeleteUser}
-              />
+              <div style={{ padding: '0 24px' }}>
+                <UsersTable
+                  users={users}
+                  onCreate={onCreateUser}
+                  onUpdate={onUpdateUser}
+                  onDelete={onDeleteUser}
+                />
+              </div>
             ),
           },
         ]}

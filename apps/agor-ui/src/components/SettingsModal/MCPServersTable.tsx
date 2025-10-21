@@ -343,7 +343,7 @@ export const MCPServersTable: React.FC<MCPServersTableProps> = ({
   ];
 
   return (
-    <div style={{ padding: '0 24px' }}>
+    <div>
       <div style={{ marginBottom: 16 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalOpen(true)}>
           New MCP Server

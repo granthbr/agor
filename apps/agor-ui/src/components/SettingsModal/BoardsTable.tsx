@@ -130,7 +130,7 @@ export const BoardsTable: React.FC<BoardsTableProps> = ({
   ];
 
   return (
-    <div style={{ padding: '0 24px' }}>
+    <div>
       <div style={{ marginBottom: 16 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalOpen(true)}>
           New Board

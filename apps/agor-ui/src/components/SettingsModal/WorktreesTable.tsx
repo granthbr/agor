@@ -191,8 +191,15 @@ export const WorktreesTable: React.FC<WorktreesTableProps> = ({
   ];
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: '100%', padding: '0 24px' }}>
-      <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+    <div>
+      <div
+        style={{
+          marginBottom: 16,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
         <Text type="secondary">
           Manage git worktrees for isolated development contexts across sessions.
         </Text>
@@ -204,7 +211,7 @@ export const WorktreesTable: React.FC<WorktreesTableProps> = ({
         >
           Create Worktree
         </Button>
-      </Space>
+      </div>
 
       {!worktrees && <Empty description="Loading worktrees..." />}
 
@@ -312,6 +319,6 @@ export const WorktreesTable: React.FC<WorktreesTableProps> = ({
           </Typography.Paragraph>
         </Form>
       </Modal>
-    </Space>
+    </div>
   );
 };

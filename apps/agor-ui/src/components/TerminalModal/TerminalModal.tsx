@@ -113,14 +113,11 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({ open, onClose, cli
       onCancel={onClose}
       footer={null}
       width={900}
-      bodyStyle={{
-        padding: 0,
-        height: '600px',
-        background: '#000',
-      }}
       styles={{
         body: {
           padding: 0,
+          height: '600px',
+          background: '#000',
         },
       }}
     >
