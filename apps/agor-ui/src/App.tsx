@@ -503,22 +503,24 @@ function AppContent() {
 
   const handleCreateWorktree = async (
     repoId: string,
-    data: { name: string; ref: string; createBranch: boolean }
+    data: {
+      name: string;
+      ref: string;
+      createBranch: boolean;
+      sourceBranch: string;
+      pullLatest: boolean;
+    }
   ) => {
     if (!client) return;
     try {
       message.loading({ content: 'Creating worktree...', key: 'create-worktree', duration: 0 });
 
-      // Find the repo to get its default branch
-      const repo = repos.find(r => r.repo_id === repoId);
-      const sourceBranch = repo?.default_branch || 'main';
-
       await client.service(`repos/${repoId}/worktrees`).create({
         name: data.name,
         ref: data.ref,
         createBranch: data.createBranch,
-        pullLatest: true, // Always fetch latest from remote
-        sourceBranch, // Base new branch on default branch
+        pullLatest: data.pullLatest, // Fetch latest from remote before creating
+        sourceBranch: data.sourceBranch, // Base new branch on specified source branch
       });
 
       message.success({ content: 'Worktree created successfully!', key: 'create-worktree' });

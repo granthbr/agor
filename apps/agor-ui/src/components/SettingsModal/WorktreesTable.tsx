@@ -28,7 +28,16 @@ interface WorktreesTableProps {
   worktrees: Worktree[];
   repos: Repo[];
   onDelete?: (worktreeId: string) => void;
-  onCreate?: (repoId: string, data: { name: string; ref: string; createBranch: boolean }) => void;
+  onCreate?: (
+    repoId: string,
+    data: {
+      name: string;
+      ref: string;
+      createBranch: boolean;
+      sourceBranch: string;
+      pullLatest: boolean;
+    }
+  ) => void;
   onRowClick?: (worktree: Worktree) => void;
 }
 
@@ -57,6 +66,14 @@ export const WorktreesTable: React.FC<WorktreesTableProps> = ({
     return repo?.default_branch || 'main';
   };
 
+  // Update source branch when repo changes
+  const handleRepoChange = (repoId: string) => {
+    setSelectedRepoId(repoId);
+    const repo = repos.find(r => r.repo_id === repoId);
+    const defaultBranch = repo?.default_branch || 'main';
+    form.setFieldValue('sourceBranch', defaultBranch);
+  };
+
   const handleDelete = (worktreeId: string) => {
     onDelete?.(worktreeId);
   };
@@ -69,7 +86,9 @@ export const WorktreesTable: React.FC<WorktreesTableProps> = ({
       onCreate?.(values.repoId, {
         name: values.name,
         ref: branchName,
-        createBranch: true, // Always create new branch based on default branch
+        createBranch: true, // Always create new branch based on source branch
+        sourceBranch: values.sourceBranch,
+        pullLatest: true, // Always fetch latest before creating worktree
       });
       setCreateModalOpen(false);
       form.resetFields();
@@ -268,8 +287,18 @@ export const WorktreesTable: React.FC<WorktreesTableProps> = ({
                 value: repo.repo_id,
                 label: repo.name,
               }))}
-              onChange={value => setSelectedRepoId(value)}
+              onChange={handleRepoChange}
             />
+          </Form.Item>
+
+          <Form.Item
+            name="sourceBranch"
+            label="Source Branch"
+            rules={[{ required: true, message: 'Please enter source branch' }]}
+            tooltip="Branch to use as base for the new worktree branch"
+            initialValue="main"
+          >
+            <Input placeholder="main" />
           </Form.Item>
 
           <Form.Item
@@ -308,10 +337,10 @@ export const WorktreesTable: React.FC<WorktreesTableProps> = ({
 
           <Typography.Paragraph type="secondary">
             <strong>What will happen:</strong>
-            <br />• Fetch latest from <Text code>origin/{getDefaultBranch()}</Text>
+            <br />• Fetch latest from origin
             <br />• Create new branch{' '}
             <Text code>{useSameBranchName ? '<worktree-name>' : '<branch-name>'}</Text> based on{' '}
-            <Text code>{getDefaultBranch()}</Text>
+            <Text code>{form.getFieldValue('sourceBranch') || getDefaultBranch()}</Text>
             <br />• Worktree location:{' '}
             <Text code>
               ~/.agor/worktrees/{'<repo>'}/<Text italic>{'<name>'}</Text>
