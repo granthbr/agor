@@ -532,6 +532,35 @@ function AppContent() {
     }
   };
 
+  // Handle environment control
+  const handleStartEnvironment = async (worktreeId: string) => {
+    if (!client) return;
+    try {
+      message.loading({ content: 'Starting environment...', key: 'start-env', duration: 0 });
+      await client.service(`worktrees/${worktreeId}/start`).create({});
+      message.success({ content: 'Environment started successfully!', key: 'start-env' });
+    } catch (error) {
+      message.error({
+        content: `Failed to start environment: ${error instanceof Error ? error.message : String(error)}`,
+        key: 'start-env',
+      });
+    }
+  };
+
+  const handleStopEnvironment = async (worktreeId: string) => {
+    if (!client) return;
+    try {
+      message.loading({ content: 'Stopping environment...', key: 'stop-env', duration: 0 });
+      await client.service(`worktrees/${worktreeId}/stop`).create({});
+      message.success({ content: 'Environment stopped successfully!', key: 'stop-env' });
+    } catch (error) {
+      message.error({
+        content: `Failed to stop environment: ${error instanceof Error ? error.message : String(error)}`,
+        key: 'stop-env',
+      });
+    }
+  };
+
   // Handle MCP server CRUD
   const handleCreateMCPServer = async (data: import('@agor/core/types').CreateMCPServerInput) => {
     if (!client) return;
@@ -647,6 +676,8 @@ function AppContent() {
         onDeleteWorktree={handleDeleteWorktree}
         onUpdateWorktree={handleUpdateWorktree}
         onCreateWorktree={handleCreateWorktree}
+        onStartEnvironment={handleStartEnvironment}
+        onStopEnvironment={handleStopEnvironment}
         onCreateUser={handleCreateUser}
         onUpdateUser={handleUpdateUser}
         onDeleteUser={handleDeleteUser}
