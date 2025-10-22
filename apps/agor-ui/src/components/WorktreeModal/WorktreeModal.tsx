@@ -45,12 +45,13 @@ export const WorktreeModal: React.FC<WorktreeModalProps> = ({
       footer={null}
       width={1200}
       styles={{
-        body: { padding: '24px 0', overflow: 'hidden' },
+        body: { padding: 0, maxHeight: '80vh', overflowY: 'auto' },
       }}
     >
       <Tabs
         activeKey={activeTab}
         onChange={setActiveTab}
+        style={{ padding: '0 24px' }}
         items={[
           {
             key: 'general',
