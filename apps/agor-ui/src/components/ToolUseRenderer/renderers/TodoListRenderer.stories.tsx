@@ -22,6 +22,7 @@ type Story = StoryObj<typeof meta>;
  */
 export const Default: Story = {
   args: {
+    toolUseId: 'tool_use_1',
     input: {
       todos: [
         {
@@ -59,6 +60,7 @@ export const Default: Story = {
  */
 export const AllCompleted: Story = {
   args: {
+    toolUseId: 'tool_use_2',
     input: {
       todos: [
         {
@@ -91,6 +93,7 @@ export const AllCompleted: Story = {
  */
 export const AllPending: Story = {
   args: {
+    toolUseId: 'tool_use_3',
     input: {
       todos: [
         {
@@ -118,6 +121,7 @@ export const AllPending: Story = {
  */
 export const SingleInProgress: Story = {
   args: {
+    toolUseId: 'tool_use_4',
     input: {
       todos: [
         {
@@ -135,6 +139,7 @@ export const SingleInProgress: Story = {
  */
 export const LongList: Story = {
   args: {
+    toolUseId: 'tool_use_5',
     input: {
       todos: [
         {
@@ -192,6 +197,7 @@ export const LongList: Story = {
  */
 export const RealisticTasks: Story = {
   args: {
+    toolUseId: 'tool_use_6',
     input: {
       todos: [
         {
@@ -234,6 +240,7 @@ export const RealisticTasks: Story = {
  */
 export const Empty: Story = {
   args: {
+    toolUseId: 'tool_use_7',
     input: {
       todos: [],
     },

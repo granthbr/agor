@@ -59,6 +59,7 @@ export const ToolUseRenderer: React.FC<ToolUseRendererProps> = ({ toolUse, toolR
   if (CustomRenderer) {
     return (
       <CustomRenderer
+        toolUseId={toolUse.id}
         input={input}
         result={
           toolResult

@@ -24,6 +24,11 @@ interface TodoWriteInput {
 
 interface TodoListRendererProps {
   /**
+   * Tool use ID (for stable React keys)
+   */
+  toolUseId: string;
+
+  /**
    * Tool input containing todos array
    */
   input: TodoWriteInput;
@@ -137,7 +142,7 @@ const TodoItemRow: React.FC<{ todo: TodoItem; index: number }> = ({ todo, index 
 /**
  * Main TodoListRenderer component
  */
-export const TodoListRenderer: React.FC<TodoListRendererProps> = ({ input }) => {
+export const TodoListRenderer: React.FC<TodoListRendererProps> = ({ toolUseId, input }) => {
   const { token } = theme.useToken();
 
   // Extract todos array
@@ -197,7 +202,11 @@ export const TodoListRenderer: React.FC<TodoListRendererProps> = ({ input }) => 
       {/* Todo items */}
       <div>
         {todos.map((todo, index) => (
-          <TodoItemRow key={`${todo.content}-${index}`} todo={todo} index={index} />
+          <TodoItemRow
+            key={`${toolUseId}-${todo.content.substring(0, 50)}`}
+            todo={todo}
+            index={index}
+          />
         ))}
       </div>
     </div>

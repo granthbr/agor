@@ -22,6 +22,11 @@ import { TodoListRenderer } from './TodoListRenderer';
  */
 export interface ToolRendererProps {
   /**
+   * Tool use ID (for stable React keys)
+   */
+  toolUseId: string;
+
+  /**
    * Tool input parameters (from tool_use.input)
    */
   input: Record<string, unknown>;
