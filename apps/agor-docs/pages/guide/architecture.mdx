@@ -40,6 +40,7 @@ graph TB
     subgraph Storage
         DB[(LibSQL Database<br/>~/.agor/agor.db)]
         Git[Git Worktrees<br/>~/.agor/worktrees/]
+        Config[Config<br/>~/.agor/config.yaml]
     end
 
     CLI --> Client
@@ -54,6 +55,7 @@ graph TB
 
     ORM --> DB
     Services --> Git
+    Services --> Config
 ```
 
 ## Technology Stack
