@@ -79,48 +79,39 @@ export const GeneralTab: React.FC<GeneralTabProps> = ({
               </Tag>
             )}
           </Descriptions.Item>
-          <Descriptions.Item label="Path">
-            <Typography.Text code style={{ fontSize: 11 }}>
-              {worktree.path}
-            </Typography.Text>
-          </Descriptions.Item>
           <Descriptions.Item label="Repository">
             <Space>
               <FolderOutlined />
               <Typography.Text>{repo.name}</Typography.Text>
             </Space>
           </Descriptions.Item>
-        </Descriptions>
-
-        {/* Git Information */}
-        <div>
-          <Typography.Text strong style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>
-            Git Information
-          </Typography.Text>
-          <Descriptions column={1} bordered size="small">
-            <Descriptions.Item label="Branch">
-              <Typography.Text code>{worktree.ref}</Typography.Text>
+          <Descriptions.Item label="Branch">
+            <Typography.Text code>{worktree.ref}</Typography.Text>
+          </Descriptions.Item>
+          {worktree.base_ref && (
+            <Descriptions.Item label="Base Branch">
+              <Typography.Text code>
+                {worktree.base_ref}
+                {worktree.base_sha && ` (${worktree.base_sha.substring(0, 7)})`}
+              </Typography.Text>
             </Descriptions.Item>
-            {worktree.base_ref && (
-              <Descriptions.Item label="Base">
-                <Typography.Text code>
-                  {worktree.base_ref}
-                  {worktree.base_sha && ` (${worktree.base_sha.substring(0, 7)})`}
-                </Typography.Text>
-              </Descriptions.Item>
-            )}
-            {worktree.tracking_branch && (
-              <Descriptions.Item label="Tracking">
-                <Typography.Text code>{worktree.tracking_branch}</Typography.Text>
-              </Descriptions.Item>
-            )}
-            {worktree.last_commit_sha && (
-              <Descriptions.Item label="Current SHA">
-                <Typography.Text code>{worktree.last_commit_sha.substring(0, 7)}</Typography.Text>
-              </Descriptions.Item>
-            )}
-          </Descriptions>
-        </div>
+          )}
+          {worktree.tracking_branch && (
+            <Descriptions.Item label="Tracking">
+              <Typography.Text code>{worktree.tracking_branch}</Typography.Text>
+            </Descriptions.Item>
+          )}
+          {worktree.last_commit_sha && (
+            <Descriptions.Item label="Current SHA">
+              <Typography.Text code>{worktree.last_commit_sha.substring(0, 7)}</Typography.Text>
+            </Descriptions.Item>
+          )}
+          <Descriptions.Item label="Path">
+            <Typography.Text code style={{ fontSize: 11 }}>
+              {worktree.path}
+            </Typography.Text>
+          </Descriptions.Item>
+        </Descriptions>
 
         {/* Work Context */}
         <div>
