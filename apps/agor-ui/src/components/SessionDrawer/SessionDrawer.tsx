@@ -394,7 +394,7 @@ const SessionDrawer = ({
         }}
       >
         <Space direction="vertical" style={{ width: '100%' }} size={8}>
-          <Typography.TextArea
+          <TextArea
             value={inputValue}
             onChange={e => setInputValue(e.target.value)}
             placeholder="Send a prompt, fork, or create a subtask..."

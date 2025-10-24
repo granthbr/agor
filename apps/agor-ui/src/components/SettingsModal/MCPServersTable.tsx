@@ -17,8 +17,9 @@ import {
 } from 'antd';
 import { useState } from 'react';
 
-// Using Typography.Text directly to avoid DOM Text interface collision
 const { TextArea } = Input;
+
+// Using Typography.Text directly to avoid DOM Text interface collision
 
 interface MCPServersTableProps {
   mcpServers: MCPServer[];
@@ -68,7 +69,7 @@ const MCPServerFormFields: React.FC<MCPServerFormFieldsProps> = ({
       )}
 
       <Form.Item label="Description" name="description">
-        <Typography.TextArea placeholder="Optional description..." rows={2} />
+        <TextArea placeholder="Optional description..." rows={2} />
       </Form.Item>
 
       {mode === 'create' && (
@@ -130,7 +131,7 @@ const MCPServerFormFields: React.FC<MCPServerFormFieldsProps> = ({
         name="env"
         tooltip="JSON object of environment variables"
       >
-        <Typography.TextArea placeholder='{"API_KEY": "xxx", "ALLOWED_PATHS": "/path"}' rows={3} />
+        <TextArea placeholder='{"API_KEY": "xxx", "ALLOWED_PATHS": "/path"}' rows={3} />
       </Form.Item>
 
       <Form.Item label="Enabled" name="enabled" valuePropName="checked" initialValue={true}>
