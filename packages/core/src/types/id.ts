@@ -131,6 +131,17 @@ export type UserID = UUID;
 export type WorktreeID = UUID;
 
 /**
+ * Comment identifier
+ *
+ * Uniquely identifies a board comment (human-to-human conversation).
+ * Comments can be attached to boards, sessions, tasks, messages, or worktrees.
+ *
+ * @example
+ * const commentId: CommentID = "0193h1i2-3j4k-7l5m-a8f3-9d2e1c4b5a6f";
+ */
+export type CommentID = UUID;
+
+/**
  * Note: Concepts and Reports use file paths as identifiers, not UUIDs.
  *
  * - Concepts: ConceptPath (e.g., "core.md", "explorations/cli.md")

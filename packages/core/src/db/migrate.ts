@@ -44,12 +44,30 @@ async function tablesExist(db: Database): Promise<boolean> {
   try {
     const result = await db.run(sql`
       SELECT name FROM sqlite_master
-      WHERE type='table' AND name IN ('sessions', 'tasks', 'boards', 'repos', 'worktrees', 'messages', 'users')
+      WHERE type='table' AND name IN ('sessions', 'tasks', 'boards', 'repos', 'worktrees', 'messages', 'users', 'board_comments')
     `);
     return result.rows.length > 0;
   } catch (error) {
     throw new MigrationError(
       `Failed to check if tables exist: ${error instanceof Error ? error.message : String(error)}`,
+      error
+    );
+  }
+}
+
+/**
+ * Check if a specific table exists
+ */
+async function tableExists(db: Database, tableName: string): Promise<boolean> {
+  try {
+    const result = await db.run(sql`
+      SELECT name FROM sqlite_master
+      WHERE type='table' AND name = ${tableName}
+    `);
+    return result.rows.length > 0;
+  } catch (error) {
+    throw new MigrationError(
+      `Failed to check if table ${tableName} exists: ${error instanceof Error ? error.message : String(error)}`,
       error
     );
   }
@@ -363,6 +381,68 @@ async function createInitialSchema(db: Database): Promise<void> {
     await db.run(sql`
       CREATE INDEX IF NOT EXISTS board_objects_worktree_idx ON board_objects(worktree_id)
     `);
+
+    // Board Comments table - Human-to-human conversations and collaboration
+    await db.run(sql`
+      CREATE TABLE IF NOT EXISTS board_comments (
+        comment_id TEXT PRIMARY KEY,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER,
+        board_id TEXT NOT NULL,
+        created_by TEXT NOT NULL DEFAULT 'anonymous',
+        session_id TEXT,
+        task_id TEXT,
+        message_id TEXT,
+        worktree_id TEXT,
+        content TEXT NOT NULL,
+        content_preview TEXT NOT NULL,
+        parent_comment_id TEXT,
+        resolved INTEGER NOT NULL DEFAULT 0,
+        edited INTEGER NOT NULL DEFAULT 0,
+        data TEXT NOT NULL,
+        FOREIGN KEY (board_id) REFERENCES boards(board_id) ON DELETE CASCADE,
+        FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE SET NULL,
+        FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE SET NULL,
+        FOREIGN KEY (message_id) REFERENCES messages(message_id) ON DELETE SET NULL,
+        FOREIGN KEY (worktree_id) REFERENCES worktrees(worktree_id) ON DELETE SET NULL
+      )
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS board_comments_board_idx ON board_comments(board_id)
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS board_comments_session_idx ON board_comments(session_id)
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS board_comments_task_idx ON board_comments(task_id)
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS board_comments_message_idx ON board_comments(message_id)
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS board_comments_worktree_idx ON board_comments(worktree_id)
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS board_comments_created_by_idx ON board_comments(created_by)
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS board_comments_parent_idx ON board_comments(parent_comment_id)
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS board_comments_created_idx ON board_comments(created_at)
+    `);
+
+    await db.run(sql`
+      CREATE INDEX IF NOT EXISTS board_comments_resolved_idx ON board_comments(resolved)
+    `);
   } catch (error) {
     throw new MigrationError(
       `Failed to create initial schema: ${error instanceof Error ? error.message : String(error)}`,
@@ -418,17 +498,75 @@ export async function runMigrations(
  *
  * Simpler alternative to runMigrations when you don't have migration files.
  * Always safe to call - creates tables only if they don't exist.
+ *
+ * INCREMENTAL MIGRATION SUPPORT:
+ * This function now checks for each table individually and adds missing ones.
+ * Safe to call on existing databases - only adds what's missing.
  */
 export async function initializeDatabase(db: Database): Promise<void> {
   try {
     const exists = await tablesExist(db);
 
     if (!exists) {
+      // Fresh database - create everything
       console.log('Initializing database schema...');
       await createInitialSchema(db);
       console.log('Database initialized successfully');
     } else {
-      console.log('Database already initialized');
+      // Existing database - check for missing tables and add them
+      console.log('Checking for schema updates...');
+
+      // Check for board_comments table (added in Phase 1 of comments feature)
+      const hasBoardComments = await tableExists(db, 'board_comments');
+      if (!hasBoardComments) {
+        console.log('  Adding board_comments table...');
+        await db.run(sql`
+          CREATE TABLE board_comments (
+            comment_id TEXT PRIMARY KEY,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER,
+            board_id TEXT NOT NULL,
+            created_by TEXT NOT NULL DEFAULT 'anonymous',
+            session_id TEXT,
+            task_id TEXT,
+            message_id TEXT,
+            worktree_id TEXT,
+            content TEXT NOT NULL,
+            content_preview TEXT NOT NULL,
+            parent_comment_id TEXT,
+            resolved INTEGER NOT NULL DEFAULT 0,
+            edited INTEGER NOT NULL DEFAULT 0,
+            data TEXT NOT NULL,
+            FOREIGN KEY (board_id) REFERENCES boards(board_id) ON DELETE CASCADE,
+            FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE SET NULL,
+            FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON DELETE SET NULL,
+            FOREIGN KEY (message_id) REFERENCES messages(message_id) ON DELETE SET NULL,
+            FOREIGN KEY (worktree_id) REFERENCES worktrees(worktree_id) ON DELETE SET NULL
+          )
+        `);
+
+        // Create indexes
+        await db.run(sql`CREATE INDEX board_comments_board_idx ON board_comments(board_id)`);
+        await db.run(sql`CREATE INDEX board_comments_session_idx ON board_comments(session_id)`);
+        await db.run(sql`CREATE INDEX board_comments_task_idx ON board_comments(task_id)`);
+        await db.run(sql`CREATE INDEX board_comments_message_idx ON board_comments(message_id)`);
+        await db.run(sql`CREATE INDEX board_comments_worktree_idx ON board_comments(worktree_id)`);
+        await db.run(sql`CREATE INDEX board_comments_created_by_idx ON board_comments(created_by)`);
+        await db.run(
+          sql`CREATE INDEX board_comments_parent_idx ON board_comments(parent_comment_id)`
+        );
+        await db.run(sql`CREATE INDEX board_comments_created_idx ON board_comments(created_at)`);
+        await db.run(sql`CREATE INDEX board_comments_resolved_idx ON board_comments(resolved)`);
+
+        console.log('  ✅ board_comments table added');
+      }
+
+      // Future migrations: Add more table checks here
+      // Example:
+      // const hasNewTable = await tableExists(db, 'new_table');
+      // if (!hasNewTable) { ... }
+
+      console.log('Schema up to date');
     }
   } catch (error) {
     throw new MigrationError(

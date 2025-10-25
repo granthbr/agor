@@ -976,19 +976,60 @@ const conversationComments = comments.filter(c => !c.position);
 
 ## Implementation Phases
 
-### Phase 1: MVP (Board-Level Conversations)
+### Phase 1: MVP (Board-Level Conversations) ✅ COMPLETE
 
-- [ ] Database table `board_comments` (flexible schema)
-- [ ] FeathersJS service `/board-comments`
-- [ ] Repository layer with CRUD operations
-- [ ] Basic CommentsDrawer component (Ant Design X)
-- [ ] AppHeader toggle button
-- [ ] WebSocket real-time updates
-- [ ] Create/read/delete board-level comments (no attachments yet)
+- [x] Database table `board_comments` (flexible schema) - `packages/core/src/db/schema.ts:561-633`
+- [x] **Incremental migration system** - `packages/core/src/db/migrate.ts`
+  - Added `tableExists()` helper for checking individual tables
+  - `initializeDatabase()` now checks for missing tables on existing DBs
+  - Automatically adds `board_comments` table if missing
+  - Pattern established for future incremental migrations
+- [x] Auto-migration on daemon startup - `apps/agor-daemon/src/index.ts:281-283`
+- [x] FeathersJS service `/board-comments` - `apps/agor-daemon/src/services/board-comments.ts`
+  - Returns paginated results (`{ data, total, limit, skip }`)
+  - Supports filtering by board_id, session_id, task_id, etc.
+- [x] Repository layer with CRUD operations - `packages/core/src/db/repositories/board-comments.ts`
+  - Type-safe branded UUID handling
+  - Short ID support via `resolveId()`
+  - Bulk create, resolve/unresolve, find by mentions
+- [x] TypeScript types (`BoardComment`, `CommentID`, etc.) - `packages/core/src/types/board-comment.ts`
+- [x] **CommentsDrawer component (Ant Design X Bubble.List)** - `apps/agor-ui/src/components/CommentsDrawer/`
+  - Uses `Bubble.List` for chat-style message bubbles
+  - Avatar with emoji, user name, timestamp
+  - Resolve/unresolve buttons
+  - Delete button (for current user only)
+- [x] AppHeader toggle button with badge - `apps/agor-ui/src/components/AppHeader/AppHeader.tsx`
+- [x] WebSocket real-time updates - `apps/agor-ui/src/hooks/useAgorData.ts:336-351`
+  - Comments created/patched/removed events
+  - Auto-updates UI without page refresh
+- [x] Create/read/delete board-level comments (Phase 1 scope)
+- [x] Resolve/unresolve comments
+- [x] Filter tabs (All/Unresolved/Mentions)
 
-**Effort:** ~1-2 days
+**Status:** Shipped! 🎉 (January 2025)
 
-**Schema note:** Include all optional fields (session_id, position, etc.) but leave NULL in Phase 1
+**Schema note:** All optional fields (session_id, task_id, message_id, worktree_id, position, mentions) included in schema for Phase 2+
+
+**Migration Strategy Established:**
+
+- **Incremental table-by-table checking** for existing databases
+- Manual SQL migrations in `packages/core/src/db/migrate.ts`
+- `CREATE TABLE IF NOT EXISTS` pattern (safe for existing databases)
+- `tableExists()` helper checks for individual tables
+- Auto-run on daemon startup via `initializeDatabase()`
+- Future migrations: Add new `tableExists()` check and SQL in `initializeDatabase()`
+
+**Key Implementation Learnings:**
+
+1. **Drizzle Kit `push`** doesn't work with existing DBs that have indexes
+   - Falls back to manual SQL with incremental checks
+2. **Ant Design X components:**
+   - ❌ `Conversations` = List of conversation threads (sidebar)
+   - ✅ `Bubble.List` = Chat message bubbles (conversation view)
+3. **FeathersJS pagination:** Services must return `{ data, total, limit, skip }`
+   - UI unpacks: `Array.isArray(result) ? result : result.data`
+4. **Branded UUID types:** Need explicit casts when converting DB rows:
+   - `row.user_id as UUID` not just `row.user_id`
 
 ### Phase 2: Object Attachments
 
@@ -1166,8 +1207,57 @@ SELECT * FROM board_comments WHERE board_id = ? AND session_id = ? ORDER BY crea
 
 ### Next Steps
 
-**Immediate:** Implement Phase 1 (board conversations) - ~1-2 days
-**Near-term:** Add session attachments (Phase 2) - ~1 day
-**Future:** Spatial annotations when user demand is clear (Phase 3) - ~1-2 days
+**✅ DONE:** Phase 1 (board conversations) - Shipped January 2025
+**Next:** Add object attachments (Phase 2) - ~1 day
+
+- Link comments to sessions/tasks/messages/worktrees
+- Parse `#session-id` references in content
+- Click reference → highlight/open session
+- Badge on session cards showing comment count
+- "Comment on this session" button in SessionDrawer
+  **Future:** Spatial annotations when user demand is clear (Phase 3) - ~1-2 days
+- Canvas comment mode (Figma-style)
+- Render comment pins as React Flow nodes
+- Absolute + relative positioning
 
 This design future-proofs Agor for Figma-style spatial annotations while shipping immediate value with board-level conversations.
+
+---
+
+## Implementation Notes (January 2025)
+
+### Migration System Established
+
+First database migration successfully implemented! Pattern for future migrations:
+
+1. **Add table/columns to schema** - `packages/core/src/db/schema.ts`
+2. **Add SQL to migration** - `packages/core/src/db/migrate.ts` (`createInitialSchema`)
+3. **Use `CREATE TABLE IF NOT EXISTS`** - Safe for existing databases
+4. **Auto-runs on daemon startup** - `initializeDatabase()` in `apps/agor-daemon/src/index.ts`
+
+**Key insight:** The hybrid approach (manual SQL + Drizzle ORM) works well:
+
+- Schema.ts is source of truth for TypeScript types
+- Manual SQL in migrate.ts ensures backward compatibility
+- `IF NOT EXISTS` makes migrations safe and idempotent
+- No migration tracking table needed (yet!)
+
+### What Works Out of the Box
+
+- **Real-time sync** - All users see comments instantly via WebSocket
+- **Dual drawers** - Comments (left) + Session (right) can both be open
+- **Anonymous mode** - Works with `created_by: 'anonymous'`
+- **Unread badge** - Shows count of unresolved comments
+- **Three filters** - All / Unresolved / Mentions
+- **User attribution** - Emoji + name shown for each comment
+- **Resolve workflow** - GitHub PR-style resolve/unresolve
+
+### Tested & Verified
+
+- ✅ Fresh database gets all tables (including board_comments)
+- ✅ Existing database gets new table added (no data loss)
+- ✅ Real-time comment creation across multiple clients
+- ✅ Resolve/unresolve updates instantly
+- ✅ Delete works correctly
+- ✅ Filters work (All/Unresolved/Mentions)
+- ✅ Badge count updates in real-time

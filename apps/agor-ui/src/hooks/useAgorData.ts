@@ -8,6 +8,7 @@
 import type { AgorClient } from '@agor/core/api';
 import type {
   Board,
+  BoardComment,
   BoardEntityObject,
   MCPServer,
   Repo,
@@ -23,6 +24,7 @@ interface UseAgorDataResult {
   tasks: Record<string, Task[]>;
   boards: Board[];
   boardObjects: BoardEntityObject[]; // Positioned worktrees on boards
+  comments: BoardComment[]; // Board comments for collaboration
   repos: Repo[];
   worktrees: Worktree[];
   users: User[];
@@ -44,6 +46,7 @@ export function useAgorData(client: AgorClient | null): UseAgorDataResult {
   const [tasks, setTasks] = useState<Record<string, Task[]>>({});
   const [boards, setBoards] = useState<Board[]>([]);
   const [boardObjects, setBoardObjects] = useState<BoardEntityObject[]>([]);
+  const [comments, setComments] = useState<BoardComment[]>([]);
   const [repos, setRepos] = useState<Repo[]>([]);
   const [worktrees, setWorktrees] = useState<Worktree[]>([]);
   const [users, setUsers] = useState<User[]>([]);
@@ -62,12 +65,13 @@ export function useAgorData(client: AgorClient | null): UseAgorDataResult {
       setLoading(true);
       setError(null);
 
-      // Fetch sessions, tasks, boards, board-objects, repos, worktrees, users, mcp servers, session-mcp relationships in parallel
+      // Fetch sessions, tasks, boards, board-objects, comments, repos, worktrees, users, mcp servers, session-mcp relationships in parallel
       const [
         sessionsResult,
         tasksResult,
         boardsResult,
         boardObjectsResult,
+        commentsResult,
         reposResult,
         worktreesResult,
         usersResult,
@@ -78,6 +82,7 @@ export function useAgorData(client: AgorClient | null): UseAgorDataResult {
         client.service('tasks').find({ query: { $limit: 500 } }), // Fetch up to 500 tasks
         client.service('boards').find(),
         client.service('board-objects').find(),
+        client.service('board-comments').find({ query: { $limit: 500 } }), // Fetch up to 500 comments
         client.service('repos').find(),
         client.service('worktrees').find(),
         client.service('users').find(),
@@ -92,6 +97,7 @@ export function useAgorData(client: AgorClient | null): UseAgorDataResult {
       const boardObjectsList = Array.isArray(boardObjectsResult)
         ? boardObjectsResult
         : boardObjectsResult.data;
+      const commentsList = Array.isArray(commentsResult) ? commentsResult : commentsResult.data;
       const reposList = Array.isArray(reposResult) ? reposResult : reposResult.data;
       const worktreesList = Array.isArray(worktreesResult) ? worktreesResult : worktreesResult.data;
       const usersList = Array.isArray(usersResult) ? usersResult : usersResult.data;
@@ -116,6 +122,7 @@ export function useAgorData(client: AgorClient | null): UseAgorDataResult {
 
       setBoards(boardsList);
       setBoardObjects(boardObjectsList);
+      setComments(commentsList);
       setRepos(reposList);
       setWorktrees(worktreesList);
       setUsers(usersList);
@@ -326,6 +333,23 @@ export function useAgorData(client: AgorClient | null): UseAgorDataResult {
     sessionMcpService.on('created', handleSessionMcpCreated);
     sessionMcpService.on('removed', handleSessionMcpRemoved);
 
+    // Subscribe to board comment events
+    const commentsService = client.service('board-comments');
+    const handleCommentCreated = (comment: BoardComment) => {
+      setComments(prev => [...prev, comment]);
+    };
+    const handleCommentPatched = (comment: BoardComment) => {
+      setComments(prev => prev.map(c => (c.comment_id === comment.comment_id ? comment : c)));
+    };
+    const handleCommentRemoved = (comment: BoardComment) => {
+      setComments(prev => prev.filter(c => c.comment_id !== comment.comment_id));
+    };
+
+    commentsService.on('created', handleCommentCreated);
+    commentsService.on('patched', handleCommentPatched);
+    commentsService.on('updated', handleCommentPatched);
+    commentsService.on('removed', handleCommentRemoved);
+
     // Cleanup listeners on unmount
     return () => {
       sessionsService.removeListener('created', handleSessionCreated);
@@ -370,6 +394,11 @@ export function useAgorData(client: AgorClient | null): UseAgorDataResult {
 
       sessionMcpService.removeListener('created', handleSessionMcpCreated);
       sessionMcpService.removeListener('removed', handleSessionMcpRemoved);
+
+      commentsService.removeListener('created', handleCommentCreated);
+      commentsService.removeListener('patched', handleCommentPatched);
+      commentsService.removeListener('updated', handleCommentPatched);
+      commentsService.removeListener('removed', handleCommentRemoved);
     };
   }, [client, fetchData]);
 
@@ -378,6 +407,7 @@ export function useAgorData(client: AgorClient | null): UseAgorDataResult {
     tasks,
     boards,
     boardObjects,
+    comments,
     repos,
     worktrees,
     users,

@@ -1,6 +1,7 @@
 import type { ActiveUser, User } from '@agor/core/types';
 import {
   CodeOutlined,
+  CommentOutlined,
   GithubOutlined,
   LogoutOutlined,
   MenuOutlined,
@@ -8,7 +9,7 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
-import { Button, Dropdown, Layout, Space, Typography } from 'antd';
+import { Badge, Button, Dropdown, Layout, Space, Typography } from 'antd';
 import { Facepile } from '../Facepile';
 
 const { Header } = Layout;
@@ -21,9 +22,11 @@ export interface AppHeaderProps {
   onMenuClick?: () => void;
   onSettingsClick?: () => void;
   onTerminalClick?: () => void;
+  onCommentsClick?: () => void;
   onLogout?: () => void;
   currentBoardName?: string;
   currentBoardIcon?: string;
+  unreadCommentsCount?: number;
 }
 
 export const AppHeader: React.FC<AppHeaderProps> = ({
@@ -33,9 +36,11 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   onMenuClick,
   onSettingsClick,
   onTerminalClick,
+  onCommentsClick,
   onLogout,
   currentBoardName,
   currentBoardIcon,
+  unreadCommentsCount = 0,
 }) => {
   const userEmoji = user?.emoji || '👤';
 
@@ -135,6 +140,15 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
           style={{ color: '#fff' }}
           title="View on GitHub"
         />
+        <Badge count={unreadCommentsCount} dot>
+          <Button
+            type="text"
+            icon={<CommentOutlined />}
+            onClick={onCommentsClick}
+            style={{ color: '#fff' }}
+            title="Comments"
+          />
+        </Badge>
         <Button
           type="text"
           icon={<MenuOutlined />}

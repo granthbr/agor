@@ -64,6 +64,7 @@ import type {
   SessionsServiceImpl,
   TasksServiceImpl,
 } from './declarations';
+import { createBoardCommentsService } from './services/board-comments';
 import { createBoardObjectsService } from './services/board-objects';
 import { createBoardsService } from './services/boards';
 import { createConfigService } from './services/config';
@@ -275,6 +276,12 @@ async function main() {
   console.log(`📦 Connecting to database: ${DB_PATH}`);
   const db = createDatabase({ url: DB_PATH });
 
+  // Run migrations (safe for existing databases - uses CREATE TABLE IF NOT EXISTS)
+  console.log('🔄 Running database migrations...');
+  const { initializeDatabase } = await import('@agor/core/db');
+  await initializeDatabase(db);
+  console.log('✅ Database initialized');
+
   // Register core services
   app.use('/sessions', createSessionsService(db));
   app.use('/tasks', createTasksService(db));
@@ -289,6 +296,9 @@ async function main() {
 
   // Register board-objects service (positioned entities on boards)
   app.use('/board-objects', createBoardObjectsService(db));
+
+  // Register board-comments service (human-to-human conversations)
+  app.use('/board-comments', createBoardCommentsService(db));
 
   // Register worktrees service first (repos service needs to access it)
   // NOTE: Pass app instance for environment management (needs to access repos service)

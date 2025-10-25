@@ -549,6 +549,90 @@ export const sessionMcpServers = sqliteTable(
 );
 
 /**
+ * Board Comments table - Human-to-human conversations and collaboration
+ *
+ * Flexible attachment strategy:
+ * - Board-level: General conversations (no attachment foreign keys)
+ * - Object-level: Attached to sessions, tasks, messages, or worktrees
+ * - Spatial: Positioned on canvas (absolute or relative to objects)
+ *
+ * Supports threading, mentions, and resolve/unresolve workflows.
+ */
+export const boardComments = sqliteTable(
+  'board_comments',
+  {
+    // Primary identity
+    comment_id: text('comment_id', { length: 36 }).primaryKey(),
+    created_at: integer('created_at', { mode: 'timestamp_ms' }).notNull(),
+    updated_at: integer('updated_at', { mode: 'timestamp_ms' }),
+
+    // Scoping & authorship
+    board_id: text('board_id', { length: 36 })
+      .notNull()
+      .references(() => boards.board_id, { onDelete: 'cascade' }),
+    created_by: text('created_by', { length: 36 }).notNull().default('anonymous'),
+
+    // FLEXIBLE ATTACHMENTS (all optional)
+    // Phase 1: board-level only (all NULL)
+    // Phase 2: object attachments (session, task, message, worktree)
+    // Phase 3: spatial positioning
+    session_id: text('session_id', { length: 36 }).references(() => sessions.session_id, {
+      onDelete: 'set null',
+    }),
+    task_id: text('task_id', { length: 36 }).references(() => tasks.task_id, {
+      onDelete: 'set null',
+    }),
+    message_id: text('message_id', { length: 36 }).references(() => messages.message_id, {
+      onDelete: 'set null',
+    }),
+    worktree_id: text('worktree_id', { length: 36 }).references(() => worktrees.worktree_id, {
+      onDelete: 'set null',
+    }),
+
+    // Content (materialized for display)
+    content: text('content').notNull(), // Markdown-supported text
+    content_preview: text('content_preview').notNull(), // First 200 chars
+
+    // Thread support (optional)
+    parent_comment_id: text('parent_comment_id', { length: 36 }),
+
+    // Metadata (materialized for filtering)
+    resolved: integer('resolved', { mode: 'boolean' }).notNull().default(false),
+    edited: integer('edited', { mode: 'boolean' }).notNull().default(false),
+
+    // JSON blob for advanced features
+    data: text('data', { mode: 'json' })
+      .$type<{
+        // Spatial positioning (Phase 3)
+        position?: {
+          // Absolute board coordinates (React Flow coordinates)
+          absolute?: { x: number; y: number };
+          // OR relative to session (follows session when it moves)
+          relative?: {
+            session_id: string;
+            offset_x: number;
+            offset_y: number;
+          };
+        };
+        // Mentions (Phase 4)
+        mentions?: string[]; // Array of user IDs
+      }>()
+      .notNull(),
+  },
+  table => ({
+    boardIdx: index('board_comments_board_idx').on(table.board_id),
+    sessionIdx: index('board_comments_session_idx').on(table.session_id),
+    taskIdx: index('board_comments_task_idx').on(table.task_id),
+    messageIdx: index('board_comments_message_idx').on(table.message_id),
+    worktreeIdx: index('board_comments_worktree_idx').on(table.worktree_id),
+    createdByIdx: index('board_comments_created_by_idx').on(table.created_by),
+    parentIdx: index('board_comments_parent_idx').on(table.parent_comment_id),
+    createdIdx: index('board_comments_created_idx').on(table.created_at),
+    resolvedIdx: index('board_comments_resolved_idx').on(table.resolved),
+  })
+);
+
+/**
  * Type exports for use with Drizzle ORM
  */
 export type SessionRow = typeof sessions.$inferSelect;
@@ -571,3 +655,5 @@ export type SessionMCPServerRow = typeof sessionMcpServers.$inferSelect;
 export type SessionMCPServerInsert = typeof sessionMcpServers.$inferInsert;
 export type BoardObjectRow = typeof boardObjects.$inferSelect;
 export type BoardObjectInsert = typeof boardObjects.$inferInsert;
+export type BoardCommentRow = typeof boardComments.$inferSelect;
+export type BoardCommentInsert = typeof boardComments.$inferInsert;

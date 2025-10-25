@@ -60,6 +60,7 @@ function AppContent() {
     tasks,
     boards,
     boardObjects,
+    comments,
     repos,
     worktrees,
     users,
@@ -671,6 +672,49 @@ function AppContent() {
     }
   };
 
+  // Handle board comments
+  const handleSendComment = async (boardId: string, content: string) => {
+    if (!client) return;
+    try {
+      await client.service('board-comments').create({
+        board_id: boardId,
+        created_by: user?.user_id || 'anonymous',
+        content,
+        content_preview: content.slice(0, 200),
+      });
+    } catch (error) {
+      message.error(
+        `Failed to send comment: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
+
+  const handleResolveComment = async (commentId: string) => {
+    if (!client) return;
+    try {
+      const comment = comments.find(c => c.comment_id === commentId);
+      await client.service('board-comments').patch(commentId, {
+        resolved: !comment?.resolved,
+      });
+    } catch (error) {
+      message.error(
+        `Failed to resolve comment: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    if (!client) return;
+    try {
+      await client.service('board-comments').remove(commentId);
+      message.success('Comment deleted');
+    } catch (error) {
+      message.error(
+        `Failed to delete comment: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
+
   // Generate repo reference options for dropdowns
   const allOptions = getRepoReferenceOptions(repos, worktrees);
   const worktreeOptions = allOptions.filter(opt => opt.type === 'managed-worktree');
@@ -688,6 +732,7 @@ function AppContent() {
         availableAgents={availableAgents}
         boards={boards}
         boardObjects={boardObjects}
+        comments={comments}
         repos={repos}
         worktrees={worktrees}
         users={users}
@@ -719,6 +764,9 @@ function AppContent() {
         onUpdateMCPServer={handleUpdateMCPServer}
         onDeleteMCPServer={handleDeleteMCPServer}
         onUpdateSessionMcpServers={handleUpdateSessionMcpServers}
+        onSendComment={handleSendComment}
+        onResolveComment={handleResolveComment}
+        onDeleteComment={handleDeleteComment}
         onLogout={logout}
       />
     </>
