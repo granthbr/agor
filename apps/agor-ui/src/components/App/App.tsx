@@ -153,8 +153,13 @@ export const App: React.FC<AppProps> = ({
   const [newWorktreeModalOpen, setNewWorktreeModalOpen] = useState(false);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [listDrawerOpen, setListDrawerOpen] = useState(false);
-  const [commentsPanelCollapsed, setCommentsPanelCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Initialize comments panel state from localStorage (collapsed by default)
+  const [commentsPanelCollapsed, setCommentsPanelCollapsed] = useState(() => {
+    const stored = localStorage.getItem('agor:commentsPanelCollapsed');
+    return stored ? stored === 'true' : true; // Default to collapsed (hidden)
+  });
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalCommands, setTerminalCommands] = useState<string[]>([]);
   const [sessionSettingsId, setSessionSettingsId] = useState<string | null>(null);
@@ -175,6 +180,11 @@ export const App: React.FC<AppProps> = ({
       localStorage.setItem('agor:currentBoardId', currentBoardId);
     }
   }, [currentBoardId]);
+
+  // Persist comments panel collapsed state to localStorage
+  useEffect(() => {
+    localStorage.setItem('agor:commentsPanelCollapsed', String(commentsPanelCollapsed));
+  }, [commentsPanelCollapsed]);
 
   // If the stored board no longer exists (e.g., deleted), fallback to first board
   useEffect(() => {
@@ -392,6 +402,7 @@ export const App: React.FC<AppProps> = ({
             users={users}
             worktrees={boardWorktrees}
             boardObjects={boardObjects}
+            comments={comments}
             currentUserId={user?.user_id}
             availableAgents={availableAgents}
             mcpServers={mcpServers}

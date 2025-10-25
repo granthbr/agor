@@ -1,7 +1,7 @@
 import type { AgorClient } from '@agor/core/api';
 import type { BoardID, MCPServer, User, WorktreeID, ZoneTrigger } from '@agor/core/types';
-import { BorderOutlined, DeleteOutlined, SelectOutlined } from '@ant-design/icons';
-import { Modal, Typography } from 'antd';
+import { BorderOutlined, CommentOutlined, DeleteOutlined, SelectOutlined } from '@ant-design/icons';
+import { Input, Modal, Popover, Typography } from 'antd';
 import Handlebars from 'handlebars';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -37,7 +37,7 @@ import { useCursorTracking } from '../../hooks/useCursorTracking';
 import { usePresence } from '../../hooks/usePresence';
 import SessionCard from '../SessionCard';
 import WorktreeCard from '../WorktreeCard';
-import { ZoneNode } from './canvas/BoardObjectNodes';
+import { CommentNode, ZoneNode } from './canvas/BoardObjectNodes';
 import { CursorNode } from './canvas/CursorNode';
 import { useBoardObjects } from './canvas/useBoardObjects';
 import { ZoneTriggerModal } from './canvas/ZoneTriggerModal';
@@ -52,6 +52,7 @@ interface SessionCanvasProps {
   users: User[];
   worktrees: import('@agor/core/types').Worktree[];
   boardObjects: import('@agor/core/types').BoardEntityObject[];
+  comments: import('@agor/core/types').BoardComment[];
   currentUserId?: string;
   availableAgents?: AgenticToolOption[];
   mcpServers?: MCPServer[];
@@ -166,6 +167,7 @@ const nodeTypes = {
   worktreeNode: WorktreeNode,
   zone: ZoneNode,
   cursor: CursorNode,
+  comment: CommentNode,
 };
 
 const SessionCanvas = ({
@@ -174,6 +176,7 @@ const SessionCanvas = ({
   sessions,
   worktrees,
   boardObjects,
+  comments,
   tasks,
   users,
   currentUserId,
@@ -194,13 +197,20 @@ const SessionCanvas = ({
   onOpenTerminal,
 }: SessionCanvasProps) => {
   // Tool state for canvas annotations
-  const [activeTool, setActiveTool] = useState<'select' | 'zone' | 'eraser'>('select');
+  const [activeTool, setActiveTool] = useState<'select' | 'zone' | 'comment' | 'eraser'>('select');
 
   // Zone drawing state (drag-to-draw)
   const [drawingZone, setDrawingZone] = useState<{
     start: { x: number; y: number };
     end: { x: number; y: number };
   } | null>(null);
+
+  // Comment placement state (click-to-place)
+  const [commentPlacement, setCommentPlacement] = useState<{
+    position: { x: number; y: number }; // React Flow coordinates
+    screenPosition: { x: number; y: number }; // Screen coordinates for popover
+  } | null>(null);
+  const [commentInput, setCommentInput] = useState('');
 
   // Trigger confirmation modal state
   const [triggerModal, setTriggerModal] = useState<{
@@ -461,6 +471,47 @@ const SessionCanvas = ({
     return nodes;
   }, [remoteCursors]);
 
+  // Create comment nodes from spatial comments
+  const commentNodes: Node[] = useMemo(() => {
+    const nodes: Node[] = [];
+
+    // Filter to only spatial comments (with position.absolute)
+    const spatialComments = comments.filter(c => c.position?.absolute);
+
+    // Count replies for each thread root
+    const replyCount = new Map<string, number>();
+    for (const comment of comments) {
+      if (comment.parent_comment_id) {
+        replyCount.set(
+          comment.parent_comment_id,
+          (replyCount.get(comment.parent_comment_id) || 0) + 1
+        );
+      }
+    }
+
+    for (const comment of spatialComments) {
+      if (comment.position?.absolute) {
+        nodes.push({
+          id: `comment-${comment.comment_id}`,
+          type: 'comment',
+          position: comment.position.absolute,
+          draggable: true,
+          selectable: true,
+          data: {
+            comment,
+            replyCount: replyCount.get(comment.comment_id) || 0,
+            onClick: (commentId: string) => {
+              // TODO: Phase 2 - open comments panel and scroll to comment
+              console.log('Clicked comment:', commentId);
+            },
+          },
+        });
+      }
+    }
+
+    return nodes;
+  }, [comments]);
+
   // Sync SESSION nodes only (don't trigger on zone changes)
   useEffect(() => {
     if (isDraggingRef.current) return;
@@ -469,6 +520,7 @@ const SessionCanvas = ({
       // Separate existing nodes by type
       const existingZones = currentNodes.filter(n => n.type === 'zone');
       const existingCursors = currentNodes.filter(n => n.type === 'cursor');
+      const existingComments = currentNodes.filter(n => n.type === 'comment');
 
       // Update worktree nodes with preserved state
       const updatedWorktrees = initialNodes.map(newNode => {
@@ -492,8 +544,8 @@ const SessionCanvas = ({
         return { ...newNode, selected: existingNode?.selected };
       });
 
-      // Merge: worktrees + existing zones + existing cursors
-      return [...updatedWorktrees, ...existingZones, ...existingCursors];
+      // Merge: worktrees + existing zones + existing cursors + existing comments
+      return [...updatedWorktrees, ...existingZones, ...existingCursors, ...existingComments];
     });
   }, [initialNodes, setNodes]);
 
@@ -504,9 +556,10 @@ const SessionCanvas = ({
     const boardObjectNodes = getBoardObjectNodes();
 
     setNodes(currentNodes => {
-      // Keep existing worktrees and cursors, replace zones
+      // Keep existing worktrees, cursors, and comments, replace zones
       const worktrees = currentNodes.filter(n => n.type === 'worktreeNode');
       const cursors = currentNodes.filter(n => n.type === 'cursor');
+      const comments = currentNodes.filter(n => n.type === 'comment');
 
       // Update zones with preserved selection state
       const zones = boardObjectNodes
@@ -517,7 +570,7 @@ const SessionCanvas = ({
           return { ...newZone, selected: existingZone?.selected };
         });
 
-      return [...worktrees, ...zones, ...cursors];
+      return [...worktrees, ...zones, ...cursors, ...comments];
     });
   }, [getBoardObjectNodes, setNodes]); // REMOVED setNodes from dependencies
 
@@ -526,13 +579,28 @@ const SessionCanvas = ({
     if (isDraggingRef.current) return;
 
     setNodes(currentNodes => {
-      // Keep existing worktrees and zones, replace cursors
+      // Keep existing worktrees, zones, and comments, replace cursors
       const worktrees = currentNodes.filter(n => n.type === 'worktreeNode');
       const zones = currentNodes.filter(n => n.type === 'zone');
+      const comments = currentNodes.filter(n => n.type === 'comment');
 
-      return [...worktrees, ...zones, ...cursorNodes];
+      return [...worktrees, ...zones, ...comments, ...cursorNodes];
     });
   }, [cursorNodes, setNodes]); // REMOVED setNodes from dependencies
+
+  // Sync COMMENT nodes separately
+  useEffect(() => {
+    if (isDraggingRef.current) return;
+
+    setNodes(currentNodes => {
+      // Keep existing worktrees, zones, and cursors, replace comments
+      const worktrees = currentNodes.filter(n => n.type === 'worktreeNode');
+      const zones = currentNodes.filter(n => n.type === 'zone');
+      const cursors = currentNodes.filter(n => n.type === 'cursor');
+
+      return [...worktrees, ...zones, ...cursors, ...commentNodes];
+    });
+  }, [commentNodes, setNodes]);
 
   // Sync edges
   useEffect(() => {
@@ -978,6 +1046,53 @@ const SessionCanvas = ({
     }
   }, [activeTool, drawingZone, board, client, setNodes]);
 
+  // Pane click handler for comment placement
+  const handlePaneClick = useCallback(
+    (event: React.MouseEvent) => {
+      if (activeTool === 'comment' && reactFlowInstanceRef.current) {
+        const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();
+        const position = reactFlowInstanceRef.current.screenToFlowPosition({
+          x: event.clientX - bounds.left,
+          y: event.clientY - bounds.top,
+        });
+
+        setCommentPlacement({
+          position, // React Flow coordinates for storing in DB
+          screenPosition: { x: event.clientX, y: event.clientY }, // Screen coords for popover
+        });
+      }
+    },
+    [activeTool]
+  );
+
+  // Handler to create spatial comment
+  const handleCreateSpatialComment = useCallback(async () => {
+    if (!commentPlacement || !board || !client || !currentUserId || !commentInput.trim()) {
+      return;
+    }
+
+    try {
+      await client.service('board-comments').create({
+        board_id: board.board_id,
+        created_by: currentUserId,
+        content: commentInput.trim(),
+        position: {
+          absolute: commentPlacement.position,
+        },
+        resolved: false,
+        edited: false,
+        reactions: [],
+      });
+
+      // Reset state
+      setCommentPlacement(null);
+      setCommentInput('');
+      setActiveTool('select');
+    } catch (error) {
+      console.error('Failed to create spatial comment:', error);
+    }
+  }, [commentPlacement, board, client, currentUserId, commentInput]);
+
   // Node click handler for eraser mode
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
@@ -1004,6 +1119,7 @@ const SessionCanvas = ({
       }
 
       if (e.key === 'z') setActiveTool('zone');
+      if (e.key === 'c') setActiveTool('comment');
       if (e.key === 'e') setActiveTool('eraser');
       if (e.key === 'Escape') setActiveTool('select');
       if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -1058,6 +1174,7 @@ const SessionCanvas = ({
         onNodeDrag={handleNodeDrag}
         onNodeDragStop={handleNodeDragStop}
         onNodeClick={handleNodeClick}
+        onPaneClick={handlePaneClick}
         onInit={instance => {
           reactFlowInstanceRef.current = instance;
         }}
@@ -1103,6 +1220,18 @@ const SessionCanvas = ({
           <ControlButton
             onClick={e => {
               e.stopPropagation();
+              setActiveTool('comment');
+            }}
+            title="Add Comment (C)"
+            style={{
+              borderLeft: activeTool === 'comment' ? '3px solid #1677ff' : 'none',
+            }}
+          >
+            <CommentOutlined style={{ fontSize: '16px' }} />
+          </ControlButton>
+          <ControlButton
+            onClick={e => {
+              e.stopPropagation();
               setActiveTool(activeTool === 'eraser' ? 'select' : 'eraser');
             }}
             title="Eraser (E) - Click to toggle"
@@ -1142,6 +1271,63 @@ const SessionCanvas = ({
           zoomable
         />
       </ReactFlow>
+
+      {/* Spatial comment placement popover */}
+      {commentPlacement && (
+        <Popover
+          open={true}
+          content={
+            <div style={{ width: 300 }}>
+              <Input.TextArea
+                placeholder="Add a comment..."
+                value={commentInput}
+                onChange={e => setCommentInput(e.target.value)}
+                onPressEnter={e => {
+                  if (!e.shiftKey) {
+                    e.preventDefault();
+                    handleCreateSpatialComment();
+                  }
+                }}
+                autoFocus
+                rows={3}
+                style={{ marginBottom: 8 }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <Typography.Link
+                  onClick={() => {
+                    setCommentPlacement(null);
+                    setCommentInput('');
+                    setActiveTool('select');
+                  }}
+                  style={{ lineHeight: '32px' }}
+                >
+                  Cancel
+                </Typography.Link>
+                <Typography.Link
+                  onClick={handleCreateSpatialComment}
+                  disabled={!commentInput.trim()}
+                  style={{ lineHeight: '32px', fontWeight: 500 }}
+                >
+                  Comment
+                </Typography.Link>
+              </div>
+            </div>
+          }
+          // Position the popover at the click location
+          getPopupContainer={() => document.body}
+        >
+          <div
+            style={{
+              position: 'fixed',
+              left: commentPlacement.screenPosition.x,
+              top: commentPlacement.screenPosition.y,
+              width: 1,
+              height: 1,
+              pointerEvents: 'none',
+            }}
+          />
+        </Popover>
+      )}
 
       {/* Trigger confirmation modal */}
       {triggerModal &&

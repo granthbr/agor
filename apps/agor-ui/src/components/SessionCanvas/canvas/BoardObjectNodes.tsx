@@ -2,11 +2,11 @@
  * Custom React Flow node components for board objects (text labels, zones, etc.)
  */
 
-import { DeleteOutlined, SettingOutlined } from '@ant-design/icons';
-import { theme } from 'antd';
+import type { BoardComment, BoardObject } from '@agor/core/types';
+import { CommentOutlined, DeleteOutlined, SettingOutlined } from '@ant-design/icons';
+import { Badge, theme } from 'antd';
 import React, { useEffect, useRef, useState } from 'react';
 import { NodeResizer, useViewport } from 'reactflow';
-import type { BoardObject } from '@agor/core/types';
 import { DeleteZoneModal } from './DeleteZoneModal';
 import { ZoneConfigModal } from './ZoneConfigModal';
 
@@ -392,3 +392,88 @@ const ZoneNodeComponent = ({ data, selected }: { data: ZoneNodeData; selected?: 
 
 // Memoize to prevent unnecessary re-renders
 export const ZoneNode = React.memo(ZoneNodeComponent);
+
+/**
+ * CommentNode - Spatial comment bubble pinned to canvas
+ */
+interface CommentNodeData {
+  comment: BoardComment;
+  replyCount: number;
+  onClick?: (commentId: string) => void;
+}
+
+const CommentNodeComponent = ({ data }: { data: CommentNodeData }) => {
+  const { token } = theme.useToken();
+  const { comment, replyCount, onClick } = data;
+
+  // Show first line of content as preview
+  const preview = comment.content.split('\n')[0].slice(0, 50);
+  const hasMore = comment.content.length > 50 || comment.content.includes('\n');
+
+  return (
+    <div
+      onClick={() => onClick?.(comment.comment_id)}
+      style={{
+        background: token.colorBgContainer,
+        border: `2px solid ${comment.resolved ? token.colorSuccess : token.colorPrimary}`,
+        borderRadius: token.borderRadiusLG,
+        padding: '12px',
+        minWidth: '200px',
+        maxWidth: '300px',
+        boxShadow: token.boxShadowSecondary,
+        cursor: 'pointer',
+        transition: 'all 0.2s',
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.boxShadow = token.boxShadow;
+        e.currentTarget.style.transform = 'scale(1.02)';
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.boxShadow = token.boxShadowSecondary;
+        e.currentTarget.style.transform = 'scale(1)';
+      }}
+    >
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <CommentOutlined
+          style={{ color: comment.resolved ? token.colorSuccess : token.colorPrimary }}
+        />
+        <div style={{ flex: 1, fontSize: 12, color: token.colorTextSecondary }}>
+          {comment.resolved ? 'Resolved' : 'Open'}
+        </div>
+        {replyCount > 0 && (
+          <Badge
+            count={replyCount}
+            style={{
+              backgroundColor: token.colorBgTextHover,
+              color: token.colorText,
+              fontSize: 11,
+            }}
+          />
+        )}
+        {comment.reactions && comment.reactions.length > 0 && (
+          <div style={{ fontSize: 11, color: token.colorTextSecondary }}>
+            {comment.reactions.slice(0, 3).map(r => (
+              <span key={`${r.user_id}-${r.emoji}`}>{r.emoji}</span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Content preview */}
+      <div
+        style={{
+          fontSize: 13,
+          color: token.colorText,
+          lineHeight: '1.4',
+          wordBreak: 'break-word',
+        }}
+      >
+        {preview}
+        {hasMore && <span style={{ color: token.colorTextSecondary }}>...</span>}
+      </div>
+    </div>
+  );
+};
+
+export const CommentNode = React.memo(CommentNodeComponent);
