@@ -494,6 +494,11 @@ const SessionCanvas = ({
         // Find user who created the comment
         const user = users.find(u => u.user_id === comment.created_by);
 
+        console.log(
+          `📌 Rendering comment ${comment.comment_id.slice(0, 8)} at:`,
+          comment.position.absolute
+        );
+
         nodes.push({
           id: `comment-${comment.comment_id}`,
           type: 'comment',
@@ -1054,10 +1059,15 @@ const SessionCanvas = ({
   const handlePaneClick = useCallback(
     (event: React.MouseEvent) => {
       if (activeTool === 'comment' && reactFlowInstanceRef.current) {
-        const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();
-        const position = reactFlowInstanceRef.current.screenToFlowPosition({
-          x: event.clientX - bounds.left,
-          y: event.clientY - bounds.top,
+        // Use project instead of screenToFlowPosition for more accurate coordinates
+        const position = reactFlowInstanceRef.current.project({
+          x: event.clientX,
+          y: event.clientY,
+        });
+
+        console.log('📍 Comment click:', {
+          client: { x: event.clientX, y: event.clientY },
+          flowPosition: position,
         });
 
         setCommentPlacement({
@@ -1076,6 +1086,8 @@ const SessionCanvas = ({
     }
 
     try {
+      console.log('💾 Saving comment at position:', commentPlacement.position);
+
       await client.service('board-comments').create({
         board_id: board.board_id,
         created_by: currentUserId,
