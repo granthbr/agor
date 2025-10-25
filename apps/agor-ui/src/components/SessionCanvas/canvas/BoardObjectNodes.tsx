@@ -428,7 +428,7 @@ const CommentNodeComponent = ({ data }: { data: CommentNodeData }) => {
         position: 'relative',
         cursor: 'pointer',
         transform: `scale(${scale})`,
-        transformOrigin: 'center bottom',
+        transformOrigin: 'top left',
         transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
     >
