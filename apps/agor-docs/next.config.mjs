@@ -7,6 +7,7 @@ const withNextra = nextra({
   defaultShowCopyCode: true,
 });
 
+// Deployed to custom domain agor.live (no base path needed)
 export default withNextra({
   reactStrictMode: true,
   output: 'export',
