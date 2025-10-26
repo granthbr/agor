@@ -264,7 +264,7 @@ export const App: React.FC<AppProps> = ({
     }
   };
 
-  const handleSubtask = (prompt: string) => {
+  const handleSubsession = (prompt: string) => {
     if (selectedSessionId) {
       onSpawnSession?.(selectedSessionId, prompt);
     }
@@ -466,7 +466,7 @@ export const App: React.FC<AppProps> = ({
         onClose={() => setSelectedSessionId(null)}
         onSendPrompt={handleSendPrompt}
         onFork={handleFork}
-        onSubtask={handleSubtask}
+        onSubsession={handleSubsession}
         onPermissionDecision={handlePermissionDecision}
         onOpenSettings={sessionId => {
           setSessionSettingsId(sessionId);

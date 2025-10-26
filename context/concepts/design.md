@@ -7,6 +7,7 @@ This document outlines Agor UI's design principles, component patterns, and tech
 ## Tech Stack
 
 ### Core Framework
+
 - **Vite + React + TypeScript** - Fast, modern, lightweight
 - **Ant Design** - Primary component library
 - **X Ant Design** - Chat/session-specific components
@@ -14,11 +15,13 @@ This document outlines Agor UI's design principles, component patterns, and tech
   - Future: Bubble/Conversations for chat interfaces
 
 ### Development Tools
+
 - **Storybook** - Component development and documentation
 - **Vitest + RTL** - Testing framework
 - **TypeScript** - Type safety for domain models
 
 ### Rationale
+
 - **Vite over Next.js** - Faster iteration, no routing/SSR overhead
 - **Storybook-first** - Isolated component development
 - **Type-driven** - All components receive typed props (Session, Task, Board, etc.)
@@ -26,6 +29,7 @@ This document outlines Agor UI's design principles, component patterns, and tech
 ## UI Standards
 
 ### Theming
+
 - **Dark mode by default** - ConfigProvider with `theme.darkAlgorithm`
 - **Strict Ant Design token usage** - No custom CSS, only Ant Design theme tokens
   - `token.colorBgContainer` for backgrounds
@@ -34,6 +38,7 @@ This document outlines Agor UI's design principles, component patterns, and tech
   - See Ant Design theme documentation for full token list
 
 ### Icon Consistency
+
 - **Use Ant Design icons only** - No emojis in UI components (unless user explicitly requests)
 - Standard icons:
   - `MessageOutlined` - Message count
@@ -44,6 +49,7 @@ This document outlines Agor UI's design principles, component patterns, and tech
   - `LoadingOutlined` with `Spin` - Running/in-progress states
 
 ### Color Patterns
+
 - **Status colors** (from Ant Design theme):
   - Running: `processing` (blue)
   - Completed: `success` (green)
@@ -55,6 +61,7 @@ This document outlines Agor UI's design principles, component patterns, and tech
 ## Component Architecture
 
 ### Atomic Design Pattern
+
 - **Atoms**: Button, Input, Tag, Badge (from Ant Design)
 - **Molecules**: TaskListItem, AgentSelectionCard, NewSessionButton
 - **Organisms**: SessionCard, SessionDrawer, SessionListDrawer, SessionCanvas
@@ -62,6 +69,7 @@ This document outlines Agor UI's design principles, component patterns, and tech
 - **Pages**: App component (full orchestration)
 
 ### Component Standards
+
 - **Props interface**: Export TypeScript interface for all props
 - **Storybook stories**: Minimum 3-5 stories per component
 - **Read before edit**: Always read file before editing (enforced by tools)
@@ -69,6 +77,7 @@ This document outlines Agor UI's design principles, component patterns, and tech
 - **Prefer Edit over Write**: Always edit existing files rather than creating new ones
 
 ### File Structure
+
 ```
 ComponentName/
 ├── ComponentName.tsx          # Component implementation
@@ -80,6 +89,7 @@ ComponentName/
 ## Key UI Patterns
 
 ### Two-Drawer Overlay System
+
 - **Left drawer**: Session list browser
   - Triggered by AppHeader menu button or board name click
   - Board switcher at top (Select dropdown)
@@ -90,10 +100,11 @@ ComponentName/
 - **Right drawer**: Session detail
   - Triggered by clicking session cards
   - Full conversation with task timeline
-  - Dynamic input box at bottom with action buttons (Send, Fork, Subtask)
+  - Dynamic input box at bottom with action buttons (Send, Fork, Subsession)
   - Sticky footer positioning
 
 ### Session Card Click Behavior
+
 - **Header section**: Clickable (triggers drawer)
 - **Metadata section** (description, git state, concepts): Clickable (triggers drawer)
 - **Tasks section**: NOT clickable (prevents conflicts with collapse/task clicks)
@@ -101,12 +112,14 @@ ComponentName/
 - **Cursor affordance**: Pointer cursor on clickable areas
 
 ### Board System
+
 - **Board**: Collection of sessions (like Trello boards)
 - **Board switcher**: Dropdown in left drawer
 - **Current board indicator**: Icon + name in AppHeader (clickable to open drawer)
 - **Canvas filtering**: Show only sessions from current board
 
 ### Session Canvas
+
 - **React Flow** for infinite canvas with zoom/pan
 - **Snap to grid**: 20x20 pixel grid for clean alignment
 - **Session cards as nodes**: Full SessionCard components as draggable nodes
@@ -117,21 +130,25 @@ ComponentName/
 ## Visual Design Patterns
 
 ### Status Indicators
+
 - **Running**: Animated `Spin` with `LoadingOutlined` icon (no static badge)
 - **Completed/Failed/Idle**: Badge with status color
 
 ### Git State Display
+
 - **Current SHA only**: Show just end SHA (e.g., `abc3214`), not transitions
 - **Dirty indicator**: Orange tag with EditOutlined icon
 - **Format**: `{sha}-dirty` suffix in data, stripped for display
 
 ### Task Display
+
 - **Visible tasks**: Show last 5 tasks chronologically (oldest → newest)
 - **"See more" button**: At top of task list if >5 tasks
 - **Truncation**: 120 chars for task descriptions (`TRUNCATION_LENGTH`)
 - **Tooltip**: Full prompt on status icon hover (not on text)
 
 ### Session Card Layout
+
 - **Max width**: `SESSION_CARD_MAX_WIDTH = 480` pixels
 - **Collapsible tasks**: Only task list collapses (header/metadata always visible)
 - **Genealogy tags**: Fork (cyan) and Spawn (purple) badges in header
@@ -139,6 +156,7 @@ ComponentName/
 ## Mock Data Strategy
 
 ### Realistic Data
+
 - **18+ realistic user prompts** - Multi-line, conversational
 - **Tool counts** - All tasks/sessions include `tool_use_count`
 - **Git dirty state** - Some tasks/sessions use `{sha}-dirty` to show uncommitted changes
@@ -146,6 +164,7 @@ ComponentName/
 - **3 mock boards** - Default Board, Experiments, Bug Fixes
 
 ### Naming Conventions
+
 - Sessions: `mockSessionA`, `mockSessionB`, `mockSessionC`
 - Tasks: `mockTask001`, `mockTask002`, etc.
 - Boards: `mockBoardDefault`, `mockBoardExperiments`, `mockBoardBugFixes`
@@ -154,6 +173,7 @@ ComponentName/
 ## Storybook Best Practices
 
 ### Story Coverage
+
 - Default state
 - Running/completed/failed states
 - Empty states
@@ -161,7 +181,9 @@ ComponentName/
 - Interactive states (hover, click)
 
 ### Dark Mode
+
 All stories use dark theme decorator:
+
 ```typescript
 decorators: [
   (Story) => (
@@ -175,17 +197,20 @@ decorators: [
 ## Code Quality Standards
 
 ### TypeScript
+
 - **Strict mode enabled** - No `any` types
 - **Export interfaces** - All prop interfaces exported
 - **Type imports** - Use `import type` for types
 
 ### React Patterns
+
 - **Functional components** - No class components
 - **Hooks** - `useState`, `useToken`, `useNodesState`, etc.
 - **Props destructuring** - Destructure props in function signature
 - **Optional chaining** - Use `?.` for optional props
 
 ### Performance
+
 - **Memoization** - Use `useMemo` for expensive computations
 - **React Flow optimization** - `onlyRenderVisibleElements` for large graphs
 - **Lazy loading** - Code split large components when needed
@@ -193,5 +218,6 @@ decorators: [
 ---
 
 See also:
+
 - [[core]] - Core concepts and primitives
 - [[architecture]] - System architecture

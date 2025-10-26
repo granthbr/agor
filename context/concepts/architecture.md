@@ -581,7 +581,7 @@ Agor exposes itself as an **MCP (Model Context Protocol) server** to enable agen
 - List other sessions on the same board
 - Inspect worktrees and repositories
 - Review task history
-- (Future) Create new sessions, spawn subtasks, fork workflows
+- (Future) Create new sessions, spawn subsessions, fork workflows
 
 **Key Insight:** Instead of agents parsing CLI output (`agor session list`), they use structured MCP tools with typed responses.
 
@@ -861,7 +861,7 @@ describe('MCP Tools - Session Tools', () => {
 Read-only tools are stable. Next batch will enable agents to modify their environment:
 
 - `agor_sessions_create` - Create new session
-- `agor_sessions_spawn` - Spawn child session (subtask orchestration!)
+- `agor_sessions_spawn` - Spawn child session (subsession orchestration!)
 - `agor_sessions_fork` - Fork session at specific point
 - `agor_boards_create` - Create new board
 - `agor_worktrees_create` - Create new worktree

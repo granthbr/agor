@@ -7,6 +7,7 @@ This document defines Agor's high-level information architecture and key data mo
 ## Core Models
 
 ### Session
+
 The universal container for all agent interactions.
 
 ```typescript
@@ -58,6 +59,7 @@ Session {
 ```
 
 ### Task
+
 Granular work unit within a session.
 
 ```typescript
@@ -102,6 +104,7 @@ Task {
 ```
 
 ### Repo
+
 Git repository (managed or referenced by Agor).
 
 ```typescript
@@ -139,6 +142,7 @@ WorktreeConfig {
 ```
 
 ### Board
+
 Collection of sessions (organizational primitive).
 
 ```typescript
@@ -158,6 +162,7 @@ Board {
 ```
 
 ### Concept
+
 Knowledge module (file-based).
 
 ```typescript
@@ -172,6 +177,7 @@ Concept {
 ```
 
 ### Agent
+
 Coding agent metadata.
 
 ```typescript
@@ -216,7 +222,7 @@ Session A (root)
 3. **Session → Session (Spawn)**: One-to-many
    - `parent_session_id` points to parent
    - Fresh context window
-   - Delegated subtask
+   - Delegated subsession
 
 4. **Session → Concepts**: Many-to-many
    - A session can load multiple concepts (file paths)
@@ -245,6 +251,7 @@ Session A (root)
 ## Information Flow
 
 ### Session Creation
+
 ```
 User Action → Create Session
   ├─ Select Agent
@@ -255,6 +262,7 @@ User Action → Create Session
 ```
 
 ### Task Execution
+
 ```
 User Prompt → Create Task
   ├─ Capture Git SHA (start)
@@ -266,6 +274,7 @@ User Prompt → Create Task
 ```
 
 ### Fork Operation
+
 ```
 User: "Fork at Task N"
   ├─ Create New Session
@@ -277,8 +286,9 @@ User: "Fork at Task N"
 ```
 
 ### Spawn Operation
+
 ```
-User: "Spawn subtask"
+User: "Spawn subsession"
   ├─ Create New Session
   ├─ Fresh Context (no history)
   ├─ Load Focused Concepts
@@ -325,22 +335,26 @@ AppState {
 ## Constraint & Invariants
 
 ### Session Tree Invariants
+
 1. **No cycles**: A session cannot be its own ancestor
 2. **Single fork point**: A forked session has exactly one fork_point_task_id
 3. **Single spawn point**: A spawned session has exactly one spawn_point_task_id
 4. **Mutual exclusion**: A session is either forked OR spawned, not both
 
 ### Task Invariants
+
 1. **Ordered**: Tasks within a session are chronologically ordered
 2. **Non-overlapping messages**: Message ranges don't overlap
 3. **Git progression**: sha_at_end is reachable from sha_at_start
 
 ### Git State Invariants
+
 1. **Dirty indicator**: Only current_sha and sha_at_end can have -dirty suffix
 2. **Clean commits**: base_sha and sha_at_start are always clean SHAs
 3. **Worktree isolation**: Managed worktrees are deleted when session is pruned
 
 ### Board Invariants
+
 1. **Session uniqueness**: A session belongs to at most one board
 2. **Referential integrity**: All session_ids in board.sessions exist
 
@@ -349,6 +363,7 @@ AppState {
 ### Future Models
 
 **Merge** (V2):
+
 ```typescript
 Merge {
   merge_id: string
@@ -360,6 +375,7 @@ Merge {
 ```
 
 **Team** (V2 - Cloud):
+
 ```typescript
 Team {
   team_id: string
@@ -371,6 +387,7 @@ Team {
 ```
 
 **User** (V2 - Cloud):
+
 ```typescript
 User {
   user_id: string
@@ -384,6 +401,7 @@ User {
 ---
 
 See also:
+
 - [[core]] - Core concepts and primitives
 - [[architecture]] - System architecture details
 - [[design]] - UI/UX implementation

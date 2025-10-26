@@ -41,7 +41,7 @@ Experimental ideas and designs not yet crystallized into concepts. These represe
 
 **Orchestration & Coordination:**
 
-- **[subtask-orchestration.md](explorations/subtask-orchestration.md)** - Multi-agent task coordination and getting agents to spawn Agor-tracked subtasks
+- **[subsession-orchestration.md](explorations/subsession-orchestration.md)** - Multi-agent task coordination and getting agents to spawn Agor-tracked subsessions
 - **[async-jobs.md](explorations/async-jobs.md)** - Background job processing, queuing strategies, and long-running task management
 
 **Distribution & Launch:**

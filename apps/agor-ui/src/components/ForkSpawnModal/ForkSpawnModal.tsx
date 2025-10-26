@@ -54,7 +54,7 @@ export const ForkSpawnModal: React.FC<ForkSpawnModalProps> = ({
   const actionDescription =
     action === 'fork'
       ? 'Create a sibling session to explore an alternative approach'
-      : 'Create a child session to work on a focused subtask';
+      : 'Create a child session to work on a focused subsession';
 
   return (
     <Modal
@@ -87,7 +87,7 @@ export const ForkSpawnModal: React.FC<ForkSpawnModalProps> = ({
           value={prompt}
           onChange={e => setPrompt(e.target.value)}
           placeholder={
-            action === 'fork' ? 'Try a different approach by...' : 'Work on this subtask...'
+            action === 'fork' ? 'Try a different approach by...' : 'Work on this subsession...'
           }
           autoSize={{ minRows: 4, maxRows: 12 }}
           autoFocus

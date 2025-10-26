@@ -68,7 +68,7 @@ interface SessionDrawerProps {
   onClose: () => void;
   onSendPrompt?: (prompt: string, permissionMode?: PermissionMode) => void;
   onFork?: (prompt: string) => void;
-  onSubtask?: (prompt: string) => void;
+  onSubsession?: (prompt: string) => void;
   onPermissionDecision?: (
     sessionId: string,
     requestId: string,
@@ -97,7 +97,7 @@ const SessionDrawer = ({
   onClose,
   onSendPrompt,
   onFork,
-  onSubtask,
+  onSubsession,
   onPermissionDecision,
   onOpenSettings,
   onOpenWorktree,
@@ -198,9 +198,9 @@ const SessionDrawer = ({
     }
   };
 
-  const handleSubtask = () => {
+  const handleSubsession = () => {
     if (inputValue.trim()) {
-      onSubtask?.(inputValue);
+      onSubsession?.(inputValue);
       setInputValue('');
     }
   };
@@ -423,7 +423,7 @@ const SessionDrawer = ({
           <TextArea
             value={inputValue}
             onChange={e => setInputValue(e.target.value)}
-            placeholder="Send a prompt, fork, or create a subtask..."
+            placeholder="Send a prompt, fork, or create a subsession..."
             autoSize={{ minRows: 1, maxRows: 10 }}
             onPressEnter={e => {
               if (e.shiftKey) {
@@ -475,10 +475,10 @@ const SessionDrawer = ({
                     disabled={isRunning || !inputValue.trim()}
                   />
                 </Tooltip>
-                <Tooltip title={isRunning ? 'Session is running...' : 'Spawn Subtask'}>
+                <Tooltip title={isRunning ? 'Session is running...' : 'Spawn Subsession'}>
                   <Button
                     icon={<BranchesOutlined />}
-                    onClick={handleSubtask}
+                    onClick={handleSubsession}
                     disabled={isRunning || !inputValue.trim()}
                   />
                 </Tooltip>

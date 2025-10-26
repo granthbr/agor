@@ -144,9 +144,9 @@ export interface ITool {
   forkSession?(sessionId: string, atMessageIndex?: number): Promise<SessionHandle>;
 
   /**
-   * Spawn child session for subtask
+   * Spawn child session for subsession
    *
-   * Creates focused subtask session with minimal context
+   * Creates focused subsession session with minimal context
    */
   spawnChildSession?(parentSessionId: string, prompt: string): Promise<SessionHandle>;
 

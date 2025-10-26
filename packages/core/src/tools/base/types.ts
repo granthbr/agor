@@ -90,7 +90,7 @@ export interface ToolCapabilities {
   /** Can fork sessions at specific points */
   supportsSessionFork: boolean;
 
-  /** Can spawn child sessions for subtasks */
+  /** Can spawn child sessions for subsessions */
   supportsChildSpawn: boolean;
 
   /** Tracks git state natively */

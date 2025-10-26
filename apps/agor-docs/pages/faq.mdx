@@ -66,7 +66,7 @@ Most people don't know you can do this! Context engineering is usually about:
 
 **Agor adds**: Session-level branching and composition. You can:
 1. **Fork** to parallelize work with shared context ([details below](#what-happens-when-i-fork-a-session))
-2. **Spawn** to delegate with curated context ([details below](#what-happens-when-i-spawn-a-subtask))
+2. **Spawn** to delegate with curated context ([details below](#what-happens-when-i-spawn-a-subsession))
 3. Combine both to orchestrate complex multi-agent workflows
 4. Inspect the entire tree to understand how work evolved
 
@@ -96,7 +96,7 @@ This is **location-based memory** - the same reason you remember where you parke
 Real work doesn't fit into rigid lists. It evolves:
 - Start with one worktree for a feature
 - Fork sessions to explore approaches
-- Spawn subtasks for research
+- Spawn subsessions for research
 - Some succeed, some fail, some branch further
 
 **A spatial canvas lets this emerge naturally:**
@@ -342,7 +342,7 @@ You're not exploring alternative implementations (they'd conflict on disk!) - yo
 
 ---
 
-## What happens when I "spawn" a subtask?
+## What happens when I "spawn" a subsession?
 
 **Spawning creates a child session with a FRESH context window** - the calling agent packages only the relevant context from the current session based on your spawn prompt.
 
@@ -352,24 +352,24 @@ You're not exploring alternative implementations (they'd conflict on disk!) - yo
 **Spawn**: Parent agent curates what's relevant, starts fresh context
 
 Your parent session might have:
-- Useful context for the subtask (implementation details, design decisions)
+- Useful context for the subsession (implementation details, design decisions)
 - Lots of noise (debugging, unrelated topics, log reading, tool uses from other work)
 
-When you spawn, the calling agent packages just what the subtask needs. The spawned session gets a clean context window without all the parent's clutter.
+When you spawn, the calling agent packages just what the subsession needs. The spawned session gets a clean context window without all the parent's clutter.
 
 **Key benefit**: Work in the subsession doesn't pollute the parent's context.
 
 ### How Agor differs from Claude Code's Task tool
 
 In Claude Code CLI, when you use the [Task tool](https://docs.claude.com/en/docs/agent/tools/task) or spawn a subagent:
-- Parent agent **waits** for subtask to complete
-- Subtask **reports back** to parent with results
-- Subtask history is **not** kept after completion
+- Parent agent **waits** for subsession to complete
+- Subsession **reports back** to parent with results
+- Subsession history is **not** kept after completion
 
 In Agor (currently):
 - Parent agent **does NOT wait** (fire-and-forget, may change in future)
-- Subtask **does NOT report back** automatically (may add callback option in future)
-- Subtask history **IS kept** - you can:
+- Subsession **does NOT report back** automatically (may add callback option in future)
+- Subsession history **IS kept** - you can:
   - Inspect the full conversation
   - Post-prompt the subsession
   - Fork from the subsession
@@ -378,7 +378,7 @@ In Agor (currently):
 **You can still close the loop manually** since subsessions are live and accessible:
 
 1. **Two-step approach**: Prompt the subsession to produce a report, then ask the parent session to read it
-2. **One-step approach**: Include "produce a report in `/tmp/subtask-results.md` when done" right in your spawn prompt
+2. **One-step approach**: Include "produce a report in `/tmp/subsession-results.md` when done" right in your spawn prompt
 
 Example spawn prompt: `"Implement payment gateway integration. When complete, write a summary of the implementation and any issues to /tmp/payment-report.md"`
 
@@ -406,7 +406,7 @@ Parent (Claude): "Refactor legacy codebase"
 └─ Spawn (Claude): "Extract common utilities"
 ```
 
-Parent orchestrates, children execute focused subtasks with clean context.
+Parent orchestrates, children execute focused subsessions with clean context.
 
 ---
 
@@ -420,7 +420,7 @@ Parent orchestrates, children execute focused subtasks with clean context.
 | **After creation** | Independent conversations that diverge | Independent conversations that diverge |
 | **Worktree** | **SHARED** (same filesystem) | **SHARED** (same filesystem) |
 | **Relationship** | Sibling (parallel work) | Child (delegated work) |
-| **Use case** | Parallel tasks with same starting context | Delegate focused subtask with clean context |
+| **Use case** | Parallel tasks with same starting context | Delegate focused subsession with clean context |
 | **Parent waits?** | No | No (currently, may change) |
 | **Reports back?** | No | No (currently, may add callback) |
 

@@ -129,7 +129,7 @@ const WorktreeCard = ({
       {
         key: 'spawn',
         icon: <SubnodeOutlined />,
-        label: 'Spawn Subtask',
+        label: 'Spawn Subsession',
         onClick: () => {
           setForkSpawnModal({
             open: true,

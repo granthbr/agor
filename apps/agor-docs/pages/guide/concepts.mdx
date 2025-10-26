@@ -200,7 +200,7 @@ Parent: "Build complete e-commerce checkout flow"
 └─ Spawn: "Create order confirmation email templates"
 ```
 
-Parent orchestrates, children execute focused subtasks with clean context.
+Parent orchestrates, children execute focused subsessions with clean context.
 
 **Key insight**: Both fork and spawn work on the **SAME worktree** (same filesystem), but create **independent conversations** going forward. You're not exploring alternative implementations (they'd conflict on disk!) - you're doing parallel work that starts from shared knowledge.
 

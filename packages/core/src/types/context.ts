@@ -6,7 +6,7 @@
  * Examples:
  * - "README.md"
  * - "concepts/core.md"
- * - "explorations/subtask-orchestration.md"
+ * - "explorations/subsession-orchestration.md"
  */
 export type ContextFilePath = string;
 

@@ -49,6 +49,6 @@ See [context/explorations/](context/explorations/) for detailed designs:
 - enhance around SDK advanced features, try to meet CLI parity as much as possible (support Claude Agents, slash commands, etc)
 - Cloud deployment (PostgreSQL, Turso/Supabase, hosted version)
 - Background job system (see `async-jobs.md`)
-- Subtask orchestration (see `subtask-orchestration.md`)
+- Subsession orchestration (see `subsession-orchestration.md`)
 - [ ] Keyboard shortcuts for board navigation
 - Terminal persistence across restarts (?)

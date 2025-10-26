@@ -1,4 +1,4 @@
-# Subtask Orchestration & Agent Delegation
+# Subsession Orchestration & Agent Delegation
 
 Related: [[agent-interface]], [[models]], [[core]], [[native-cli-feature-gaps]]
 
@@ -10,12 +10,12 @@ Related: [[agent-interface]], [[models]], [[core]], [[native-cli-feature-gaps]]
 
 ## TL;DR - The User-Triggered Approach
 
-**Problem:** How do we get agents to spawn Agor-tracked subtasks instead of using native delegation tools?
+**Problem:** How do we get agents to spawn Agor-tracked subsessions instead of using native delegation tools?
 
-**Solution:** Give users a **"Run in Subtask"** button that wraps their prompt in meta-instructions forcing the agent to:
+**Solution:** Give users a **"Run in Subsession"** button that wraps their prompt in meta-instructions forcing the agent to:
 
 1. Prepare a detailed, enhanced version of the user's prompt
-2. Execute `agor session subtask {id} --prompt "{prepared_prompt}"`
+2. Execute `agor session subsession {id} --prompt "{prepared_prompt}"`
 3. Report the child session ID
 
 **Why it works:**
@@ -32,7 +32,7 @@ Related: [[agent-interface]], [[models]], [[core]], [[native-cli-feature-gaps]]
 
 ## What's Already Built (Phase 2)
 
-**Foundation in place for subtask orchestration:**
+**Foundation in place for subsession orchestration:**
 
 ✅ **Session Genealogy** - `parent_session_id` exists in data model, genealogy tracking implemented
 ✅ **Agent SDK Integration** - Claude Agent SDK integrated with CLAUDE.md auto-loading
@@ -45,16 +45,16 @@ Related: [[agent-interface]], [[models]], [[core]], [[native-cli-feature-gaps]]
 
 **What's Missing:**
 
-❌ `agor session subtask` CLI command
-❌ Prompt injection for agent-initiated subtasks
+❌ `agor session subsession` CLI command
+❌ Prompt injection for agent-initiated subsessions
 ❌ Tool call monitoring and compliance tracking
-❌ Agent-to-agent subtask delegation
+❌ Agent-to-agent subsession delegation
 
 ---
 
 ## The Challenge
 
-**How do we get agents to spawn Agor-tracked subtasks instead of using their native delegation mechanisms?**
+**How do we get agents to spawn Agor-tracked subsessions instead of using their native delegation mechanisms?**
 
 ### The Problem
 
@@ -62,7 +62,7 @@ Related: [[agent-interface]], [[models]], [[core]], [[native-cli-feature-gaps]]
 
 ```typescript
 // Claude Code has a Task tool
-Agent: "I'll delegate the database schema to a subtask"
+Agent: "I'll delegate the database schema to a subsession"
 Agent uses Task tool internally
 → Spawns subprocess, completes, returns result
 → Agor has NO visibility into this subprocess
@@ -72,10 +72,10 @@ Agent uses Task tool internally
 **What we want:**
 
 ```typescript
-// Agor-managed subtask
-User: "Build auth system with database schema subtask"
+// Agor-managed subsession
+User: "Build auth system with database schema subsession"
 Agent: "I'll delegate the schema design"
-→ Agent calls `agor session subtask --prompt "Design user table schema"`
+→ Agent calls `agor session subsession --prompt "Design user table schema"`
 → Agor creates new session with parent_session_id
 → Full observability: view conversation, fork, generate report
 → Can continue prompting child session after completion
@@ -85,22 +85,22 @@ Agent: "I'll delegate the schema design"
 
 **Observability Benefits:**
 
-- See full conversation in subtask session
-- Fork subtask if it goes wrong
-- Generate reports for subtasks
+- See full conversation in subsession session
+- Fork subsession if it goes wrong
+- Generate reports for subsessions
 - Visual session tree in Agor UI
 
 **Reusability Benefits:**
 
 - Continue prompting child session after parent completes
-- Share subtask sessions with team
-- Analyze patterns across subtasks
+- Share subsession sessions with team
+- Analyze patterns across subsessions
 
 **Native Task Tool Limitations:**
 
 - ❌ No conversation history access
-- ❌ Can't fork if subtask makes wrong decision
-- ❌ Can't continue prompting after subtask completes
+- ❌ Can't fork if subsession makes wrong decision
+- ❌ Can't continue prompting after subsession completes
 - ❌ No report generation
 - ❌ Not visible in Agor session tree
 
@@ -108,19 +108,19 @@ Agent: "I'll delegate the schema design"
 
 ## Core Insight: User-Triggered Meta-Prompt Wrapper
 
-**Key idea:** User explicitly triggers "Run in Subtask" mode, which wraps their prompt in meta-instructions forcing the agent to prepare and spawn an Agor subtask.
+**Key idea:** User explicitly triggers "Run in Subsession" mode, which wraps their prompt in meta-instructions forcing the agent to prepare and spawn an Agor subsession.
 
 **Why this works:**
 
 - ✅ **Deterministic** - Not hoping agent decides to delegate
 - ✅ **Simple** - No system prompt injection or tool interception needed
-- ✅ **Value-add** - Agent optimizes the prompt before spawning subtask
+- ✅ **Value-add** - Agent optimizes the prompt before spawning subsession
 - ✅ **User control** - Explicit button press, clear intent
 - ✅ **High compliance** - Meta-instructions force the behavior
 
 ---
 
-## The "Run in Subtask" Meta-Prompt
+## The "Run in Subsession" Meta-Prompt
 
 **UI Interaction:**
 
@@ -134,23 +134,23 @@ Agent: "I'll delegate the schema design"
 │ │ system                              │ │
 │ └─────────────────────────────────────┘ │
 │                                         │
-│ [Send]  [Run in Subtask 🎯]            │
+│ [Send]  [Run in Subsession 🎯]            │
 └─────────────────────────────────────────┘
 ```
 
-**When user clicks "Run in Subtask", wrap their prompt:**
+**When user clicks "Run in Subsession", wrap their prompt:**
 
 ### The Meta-Prompt Script
 
 ```typescript
-function wrapForSubtaskExecution(userPrompt: string, sessionId: string): string {
-  return `You are being asked to spawn a subtask in the Agor orchestration platform.
+function wrapForSubsessionExecution(userPrompt: string, sessionId: string): string {
+  return `You are being asked to spawn a subsession in the Agor orchestration platform.
 
 TASK BREAKDOWN:
 1. Analyze the user's request below
 2. Prepare an optimized, detailed prompt for a specialized agent
-3. Execute the agor CLI command to spawn the subtask
-4. Report back to the user with the subtask session ID
+3. Execute the agor CLI command to spawn the subsession
+4. Report back to the user with the subsession session ID
 
 USER'S REQUEST:
 """
@@ -161,11 +161,11 @@ YOUR INSTRUCTIONS:
 
 Step 1: Analyze the request
 - Identify the core task and requirements
-- Determine what context the subtask agent will need
+- Determine what context the subsession agent will need
 - Consider what constraints or format requirements apply
 
-Step 2: Prepare the subtask prompt
-Create a comprehensive prompt for the subtask agent that includes:
+Step 2: Prepare the subsession prompt
+Create a comprehensive prompt for the subsession agent that includes:
 - Clear objective and success criteria
 - All necessary context and requirements
 - Expected output format
@@ -177,7 +177,7 @@ Add technical context, specify formats, and clarify ambiguities.
 Step 3: Execute the command
 Run this EXACT command format:
 \`\`\`bash
-agor session subtask ${sessionId} --prompt "YOUR_PREPARED_PROMPT_HERE"
+agor session subsession ${sessionId} --prompt "YOUR_PREPARED_PROMPT_HERE"
 \`\`\`
 
 IMPORTANT NOTES:
@@ -185,13 +185,13 @@ IMPORTANT NOTES:
 - Put your prepared prompt in the --prompt argument
 - Use double quotes around the prompt
 - Escape any quotes inside the prompt with backslashes
-- The command will return a child session ID when the subtask starts
+- The command will return a child session ID when the subsession starts
 
 Step 4: Report completion
 After running the command, tell the user:
-- What subtask you created
+- What subsession you created
 - The session ID of the child session
-- What to expect from the subtask
+- What to expect from the subsession
 
 EXAMPLE:
 
@@ -209,7 +209,7 @@ Your prepared prompt should be like:
 
 Then execute:
 \`\`\`bash
-agor session subtask ${sessionId} --prompt "Write comprehensive unit tests for the authentication module. Include: test user registration with valid/invalid inputs, test login flow with correct/incorrect credentials, test session token generation and validation, test password hashing security. Use Jest as the testing framework. Aim for >80% code coverage. Follow existing test patterns in tests/ directory."
+agor session subsession ${sessionId} --prompt "Write comprehensive unit tests for the authentication module. Include: test user registration with valid/invalid inputs, test login flow with correct/incorrect credentials, test session token generation and validation, test password hashing security. Use Jest as the testing framework. Aim for >80% code coverage. Follow existing test patterns in tests/ directory."
 \`\`\`
 
 Now proceed with the user's request above.`;
@@ -219,23 +219,23 @@ Now proceed with the user's request above.`;
 ### Optimized Shorter Version (Lower Token Cost)
 
 ```typescript
-function wrapForSubtaskExecution(userPrompt: string, sessionId: string): string {
-  return `SUBTASK DELEGATION MODE
+function wrapForSubsessionExecution(userPrompt: string, sessionId: string): string {
+  return `SUBSESSION DELEGATION MODE
 
-User wants this done in a subtask:
+User wants this done in a subsession:
 """
 ${userPrompt}
 """
 
 YOUR TASK:
-1. Prepare a detailed, comprehensive prompt for a subtask agent (add technical context, specify formats, clarify requirements)
-2. Run: \`agor session subtask ${sessionId} --prompt "YOUR_PREPARED_PROMPT"\`
+1. Prepare a detailed, comprehensive prompt for a subsession agent (add technical context, specify formats, clarify requirements)
+2. Run: \`agor session subsession ${sessionId} --prompt "YOUR_PREPARED_PROMPT"\`
 3. Tell user the child session ID that was created
 
 EXAMPLE:
 User: "add tests"
 Your prepared prompt: "Write Jest unit tests for auth module: registration validation, login flow, token handling, password hashing. Aim for 80%+ coverage. Match existing test patterns."
-Command: \`agor session subtask ${sessionId} --prompt "Write Jest unit tests for auth module: registration validation, login flow, token handling, password hashing. Aim for 80%+ coverage. Match existing test patterns."\`
+Command: \`agor session subsession ${sessionId} --prompt "Write Jest unit tests for auth module: registration validation, login flow, token handling, password hashing. Aim for 80%+ coverage. Match existing test patterns."\`
 
 Make your prepared prompt MORE detailed than the user's original request.
 Proceed now.`;
@@ -246,29 +246,29 @@ Proceed now.`;
 
 ## User Experience Flow
 
-### Primary: "Run in Subtask" Button
+### Primary: "Run in Subsession" Button
 
 **User Flow:**
 
 1. User types prompt in SessionDrawer: "Design PostgreSQL schema for auth"
-2. User clicks **"Run in Subtask 🎯"** button (instead of "Send")
+2. User clicks **"Run in Subsession 🎯"** button (instead of "Send")
 3. UI wraps prompt with meta-instructions (using function above)
-4. Agent receives wrapped prompt, prepares detailed subtask prompt
-5. Agent executes: `agor session subtask {session-id} --prompt "..."`
+4. Agent receives wrapped prompt, prepares detailed subsession prompt
+5. Agent executes: `agor session subsession {session-id} --prompt "..."`
 6. Child session appears on canvas with visual connection to parent
-7. Agent reports: "Created subtask session `01933f2b` for schema design"
+7. Agent reports: "Created subsession session `01933f2b` for schema design"
 8. User can click into child session to watch it work in real-time
 
 **Visual Feedback:**
 
-- Loading indicator while agent prepares subtask
+- Loading indicator while agent prepares subsession
 - Toast notification when child session spawns
 - Animated edge connecting parent → child on canvas
 - Child session badge shows "Spawned from {parent-id}"
 
 ### Secondary: Zone Triggers (Future)
 
-Zone-based subtask spawning (when wired up):
+Zone-based subsession spawning (when wired up):
 
 - Drop session onto zone with template
 - Zone prompt + user input → wrapped meta-prompt
@@ -282,14 +282,14 @@ Zone-based subtask spawning (when wired up):
 // Add button next to existing input
 <Space>
   <Button onClick={handleSend}>Send</Button>
-  <Button type="primary" icon={<RocketOutlined />} onClick={handleRunInSubtask}>
-    Run in Subtask
+  <Button type="primary" icon={<RocketOutlined />} onClick={handleRunInSubsession}>
+    Run in Subsession
   </Button>
 </Space>;
 
 // Handler
-const handleRunInSubtask = async () => {
-  const wrappedPrompt = wrapForSubtaskExecution(inputValue, session.session_id);
+const handleRunInSubsession = async () => {
+  const wrappedPrompt = wrapForSubsessionExecution(inputValue, session.session_id);
   await sendMessage(wrappedPrompt);
   // Rest is handled by agent + WebSocket updates
 };
@@ -313,7 +313,7 @@ The user-triggered meta-prompt approach is **agent-agnostic** and works with any
 ### Claude Code ✅
 
 - **Works perfectly** - Excellent at following structured prompts
-- Has bash tool to run `agor session subtask` command
+- Has bash tool to run `agor session subsession` command
 - Tends to add helpful context when preparing prompts
 - Native Task tool won't interfere (meta-prompt is explicit)
 
@@ -321,7 +321,7 @@ The user-triggered meta-prompt approach is **agent-agnostic** and works with any
 
 - **Works well** - Good at following instructions
 - Has function calling for bash execution
-- No competing subtask mechanism to confuse it
+- No competing subsession mechanism to confuse it
 - May need slight prompt tuning for best results
 
 ### Gemini ✅ (Pending SDK Integration)
@@ -336,18 +336,18 @@ Any agent with bash/command execution capability can use this approach:
 
 - No special SDK features required
 - No system prompt modification needed
-- Just needs to run `agor session subtask` command
+- Just needs to run `agor session subsession` command
 
 ---
 
 ## Technical Implementation
 
-### Agor CLI: `agor session subtask`
+### Agor CLI: `agor session subsession`
 
 **Command:**
 
 ```bash
-agor session subtask \
+agor session subsession \
   --prompt "Design PostgreSQL schema for auth" \
   --agent claude-code \
   --concepts database,security \
@@ -365,10 +365,10 @@ agor session subtask \
 
 ```bash
 # Agent runs this via bash tool
-agor session subtask --prompt "Design user table schema" --sync
+agor session subsession --prompt "Design user table schema" --sync
 
 # Output:
-# Subtask session created: 01933f2b
+# Subsession session created: 01933f2b
 # Status: running...
 # Status: completed
 # Session ID: 01933f2b
@@ -378,21 +378,21 @@ agor session subtask --prompt "Design user table schema" --sync
 **Agent sees output, can reference in response:**
 
 ```
-"I've delegated the schema design to a subtask (session 01933f2b).
-The subtask created a users table with proper constraints..."
+"I've delegated the schema design to a subsession (session 01933f2b).
+The subsession created a users table with proper constraints..."
 ```
 
 ---
 
-### Agor Daemon: Subtask Handler
+### Agor Daemon: Subsession Handler
 
 ```typescript
-// apps/agor-daemon/src/services/subtasks.ts
+// apps/agor-daemon/src/services/subsessions.ts
 // Can reuse existing sessions service with spawn method
 
 class SessionsService {
-  // Add spawn method for subtask creation
-  async spawn(sessionId: SessionID, data: SpawnSubtaskRequest, params: Params) {
+  // Add spawn method for subsession creation
+  async spawn(sessionId: SessionID, data: SpawnSubsessionRequest, params: Params) {
     const parentSession = await this.get(sessionId);
     const { prompt, agent, zoneId, sync = false } = data;
 
@@ -459,7 +459,7 @@ class SessionsService {
 
 ### Genealogy Tracking
 
-Every subtask automatically gets genealogy metadata:
+Every subsession automatically gets genealogy metadata:
 
 ```typescript
 interface SessionGenealogy {
@@ -476,12 +476,12 @@ Canvas displays parent → child relationships:
 ```
 Session Tree:
 ├─ Main Dev Session (claude-code)
-│   ├─ Schema Design (subtask, claude-code)
-│   │   └─ Migration Scripts (subtask, claude-code)
-│   └─ Unit Tests (subtask, claude-code)
+│   ├─ Schema Design (subsession, claude-code)
+│   │   └─ Migration Scripts (subsession, claude-code)
+│   └─ Unit Tests (subsession, claude-code)
 │
 └─ API Development (claude-code)
-    └─ Integration Tests (subtask, codex)
+    └─ Integration Tests (subsession, codex)
 ```
 
 **Canvas Rendering:**
@@ -511,7 +511,7 @@ Add specific technical requirements, expected formats, and constraints."
 
 ```typescript
 // Add urgency
-"CRITICAL: You MUST execute the agor session subtask command.
+"CRITICAL: You MUST execute the agor session subsession command.
 Do not just explain what you would do - actually run it."
 ```
 
@@ -520,15 +520,15 @@ Do not just explain what you would do - actually run it."
 ```typescript
 // Show exact template
 "Use EXACTLY this format (replace PROMPT with your prepared prompt):
-agor session subtask ${sessionId} --prompt \"PROMPT\""
+agor session subsession ${sessionId} --prompt \"PROMPT\""
 ```
 
 ### Quality Metrics
 
-Track subtask prompt quality over time:
+Track subsession prompt quality over time:
 
 ```typescript
-interface SubtaskQualityMetrics {
+interface SubsessionQualityMetrics {
   user_prompt_length: number;
   prepared_prompt_length: number;
   expansion_ratio: number;  // prepared / user
@@ -537,7 +537,7 @@ interface SubtaskQualityMetrics {
   included_constraints: boolean;
 }
 
-// Example good subtask
+// Example good subsession
 {
   user_prompt_length: 25,  // "add tests for auth"
   prepared_prompt_length: 180,
@@ -574,7 +574,7 @@ Test different meta-prompt styles:
 
 ---
 
-## Future: Multi-Agent Subtasks
+## Future: Multi-Agent Subsessions
 
 **V2 feature:** Parent and child can be different agents
 
@@ -582,7 +582,7 @@ Test different meta-prompt styles:
 # Parent: Claude Code working on API
 # Delegates schema to Gemini (better at data modeling)
 
-agor session subtask \
+agor session subsession \
   --prompt "Design database schema..." \
   --agent gemini \
   --concepts database
@@ -598,15 +598,15 @@ agor session subtask \
 
 ## Open Questions
 
-### 1. How to handle deeply nested subtasks?
+### 1. How to handle deeply nested subsessions?
 
 **Scenario:**
 
 ```
-Session A (user clicks "Run in Subtask")
-└─ Subtask B (user opens B, clicks "Run in Subtask" again)
-   └─ Subtask C (another level deep)
-      └─ Subtask D (getting hard to track)
+Session A (user clicks "Run in Subsession")
+└─ Subsession B (user opens B, clicks "Run in Subsession" again)
+   └─ Subsession C (another level deep)
+      └─ Subsession D (getting hard to track)
 ```
 
 **Concerns:**
@@ -632,7 +632,7 @@ Session A (user clicks "Run in Subtask")
 **C: Flatten on-demand**
 
 - Allow any depth
-- Provide "Merge into parent" button to collapse subtask back
+- Provide "Merge into parent" button to collapse subsession back
 
 **Recommendation:** Start with Option A (unlimited), add B (warnings) if users report confusion
 
@@ -650,7 +650,7 @@ Session A (user clicks "Run in Subtask")
 **Optional: Sync flag (blocking)**
 
 ```bash
-agor session subtask {id} --prompt "..." --sync
+agor session subsession {id} --prompt "..." --sync
 ```
 
 - Parent session waits for child completion
@@ -676,7 +676,7 @@ agor session subtask {id} --prompt "..." --sync
 **A: Retry with stronger prompt**
 
 ```typescript
-if (!responseContains('agor session subtask')) {
+if (!responseContains('agor session subsession')) {
   resendWithEmphasis('CRITICAL: You must EXECUTE the command, not explain it');
 }
 ```
@@ -684,19 +684,19 @@ if (!responseContains('agor session subtask')) {
 **B: Parse intent and auto-spawn**
 
 ```typescript
-// If agent says "I would create a subtask for..." but doesn't run command
+// If agent says "I would create a subsession for..." but doesn't run command
 // Extract the intended prompt and spawn on agent's behalf
-const intent = extractSubtaskIntent(agentResponse);
+const intent = extractSubsessionIntent(agentResponse);
 if (intent) {
-  await spawnSubtask(sessionId, intent.prompt);
+  await spawnSubsession(sessionId, intent.prompt);
 }
 ```
 
 **C: User manual spawn**
 
 ```
-Agent: "I think we should create a subtask for schema design"
-→ UI shows: "Agent suggested a subtask. [Create it manually]" button
+Agent: "I think we should create a subsession for schema design"
+→ UI shows: "Agent suggested a subsession. [Create it manually]" button
 ```
 
 **Recommendation:** Start with A (retry), add B (auto-spawn) if compliance is consistently low
@@ -721,7 +721,7 @@ Agent: "I think we should create a subtask for schema design"
 **Option C: Collapsible (show indicator + expand option)**
 
 ```
-User: "Design schema" [🎯 Run in Subtask]
+User: "Design schema" [🎯 Run in Subsession]
 → Expandable: "See meta-prompt instructions"
 ```
 
@@ -731,9 +731,9 @@ User: "Design schema" [🎯 Run in Subtask]
 
 ## Success Criteria
 
-**V1 User-Triggered Subtask System is successful if:**
+**V1 User-Triggered Subsession System is successful if:**
 
-1. ✅ **"Run in Subtask" button works reliably**
+1. ✅ **"Run in Subsession" button works reliably**
    - User clicks button → agent spawns child session
    - Child session appears on canvas within 5 seconds
    - Agent compliance >90% (actually runs the command)
@@ -743,7 +743,7 @@ User: "Design schema" [🎯 Run in Subtask]
    - Include technical context, formats, constraints
    - Measurable via expansion_ratio metric
 
-3. ✅ **Full observability of subtask sessions**
+3. ✅ **Full observability of subsession sessions**
    - Complete conversation history accessible
    - Can click into child session while it's running
    - WebSocket updates show real-time progress
@@ -753,14 +753,14 @@ User: "Design schema" [🎯 Run in Subtask]
    - Spawn depth badges visible
    - Can trace lineage from any session
 
-5. ✅ **Subtasks are forkable and shareable**
+5. ✅ **Subsessions are forkable and shareable**
    - Child sessions can be forked independently
    - Can continue prompting child after parent completes
-   - Reports generated for subtasks same as regular sessions
+   - Reports generated for subsessions same as regular sessions
 
 6. ✅ **User experience is intuitive**
-   - Users understand when to use "Run in Subtask" vs "Send"
-   - Clear feedback when subtask spawns
+   - Users understand when to use "Run in Subsession" vs "Send"
+   - Clear feedback when subsession spawns
    - Easy to navigate parent/child relationships
 
 ---
@@ -770,19 +770,19 @@ User: "Design schema" [🎯 Run in Subtask]
 ### Phase 1: Core Infrastructure ✅ (Mostly Complete)
 
 1. ✅ Session genealogy tracking (parent_session_id exists)
-2. ❌ CLI command: `agor session subtask`
+2. ❌ CLI command: `agor session subsession`
 3. ❌ Daemon: `POST /sessions/:id/spawn` endpoint
 4. ✅ Canvas visualization (React Flow + WebSocket)
 
 **Remaining:** CLI command + daemon spawn method (~6 hours)
 
-### Phase 2: User-Triggered Subtasks 🎯 (Primary Implementation)
+### Phase 2: User-Triggered Subsessions 🎯 (Primary Implementation)
 
-1. ❌ Add "Run in Subtask" button to SessionDrawer
+1. ❌ Add "Run in Subsession" button to SessionDrawer
 2. ❌ Implement meta-prompt wrapping function
 3. ❌ Handle wrapped prompt → agent execution
 4. ❌ Show child session on canvas with edge to parent
-5. ❌ Add toast notifications for subtask spawn
+5. ❌ Add toast notifications for subsession spawn
 
 **Estimated effort:** ~4 hours (mostly UI wiring)
 
@@ -800,9 +800,9 @@ User: "Design schema" [🎯 Run in Subtask]
 ### Phase 4: Refinements & Testing
 
 1. ❌ A/B test meta-prompt variations (verbose vs. concise)
-2. ❌ Track subtask quality metrics (expansion ratio, etc.)
-3. ❌ Add zone-triggered subtasks (wire drop event)
-4. ❌ Cross-agent subtasks (--agent flag support)
+2. ❌ Track subsession quality metrics (expansion ratio, etc.)
+3. ❌ Add zone-triggered subsessions (wire drop event)
+4. ❌ Cross-agent subsessions (--agent flag support)
 
 **Future iterations based on usage data**
 
@@ -810,13 +810,13 @@ User: "Design schema" [🎯 Run in Subtask]
 
 ## Concrete Next Steps (Post-Phase 2)
 
-**User-Triggered Subtask MVP - 4 pieces:**
+**User-Triggered Subsession MVP - 4 pieces:**
 
-### 1. CLI Command: `agor session subtask`
+### 1. CLI Command: `agor session subsession`
 
 ```bash
-# apps/agor-cli/src/commands/session/subtask.ts
-pnpm agor session subtask <parent-session-id> \
+# apps/agor-cli/src/commands/session/subsession.ts
+pnpm agor session subsession <parent-session-id> \
   --prompt "Design PostgreSQL schema for auth" \
   --agent claude-code \  # Optional, defaults to parent's agent
   --zone <zone-id> \      # Optional, position in zone
@@ -826,7 +826,7 @@ pnpm agor session subtask <parent-session-id> \
 **Implementation:**
 
 ```typescript
-export default class SessionSubtask extends Command {
+export default class SessionSubsession extends Command {
   static args = {
     sessionId: Args.string({ required: true }),
   };
@@ -838,7 +838,7 @@ export default class SessionSubtask extends Command {
   };
 
   async run() {
-    const { args, flags } = await this.parse(SessionSubtask);
+    const { args, flags } = await this.parse(SessionSubsession);
 
     // Call POST /sessions/:id/spawn
     const result = await client.service('sessions').spawn(args.sessionId, {
@@ -848,7 +848,7 @@ export default class SessionSubtask extends Command {
       sync: flags.sync,
     });
 
-    this.log(`Subtask session created: ${shortId(result.session_id)}`);
+    this.log(`Subsession session created: ${shortId(result.session_id)}`);
     if (flags.sync) {
       this.log(`Status: ${result.status}`);
     }
@@ -868,7 +868,7 @@ export default class SessionSubtask extends Command {
 ```typescript
 // apps/agor-daemon/src/services/sessions/sessions.class.ts
 
-async spawn(id: SessionID, data: SpawnSubtaskRequest, params: Params) {
+async spawn(id: SessionID, data: SpawnSubsessionRequest, params: Params) {
   const parent = await this.get(id);
 
   // Create child session
@@ -922,37 +922,37 @@ export default function (app: Application) {
 
 ---
 
-### 3. UI: Add "Run in Subtask" Button
+### 3. UI: Add "Run in Subsession" Button
 
 ```typescript
 // apps/agor-ui/src/components/SessionDrawer.tsx
 
 // Meta-prompt wrapper utility
-function wrapForSubtaskExecution(userPrompt: string, sessionId: string): string {
-  return `SUBTASK DELEGATION MODE
+function wrapForSubsessionExecution(userPrompt: string, sessionId: string): string {
+  return `SUBSESSION DELEGATION MODE
 
-User wants this done in a subtask:
+User wants this done in a subsession:
 """
 ${userPrompt}
 """
 
 YOUR TASK:
-1. Prepare a detailed, comprehensive prompt for a subtask agent (add technical context, specify formats, clarify requirements)
-2. Run: \`agor session subtask ${sessionId} --prompt "YOUR_PREPARED_PROMPT"\`
+1. Prepare a detailed, comprehensive prompt for a subsession agent (add technical context, specify formats, clarify requirements)
+2. Run: \`agor session subsession ${sessionId} --prompt "YOUR_PREPARED_PROMPT"\`
 3. Tell user the child session ID that was created
 
 EXAMPLE:
 User: "add tests"
 Your prepared prompt: "Write Jest unit tests for auth module: registration validation, login flow, token handling, password hashing. Aim for 80%+ coverage. Match existing test patterns."
-Command: \`agor session subtask ${sessionId} --prompt "Write Jest unit tests for auth module: registration validation, login flow, token handling, password hashing. Aim for 80%+ coverage. Match existing test patterns."\`
+Command: \`agor session subsession ${sessionId} --prompt "Write Jest unit tests for auth module: registration validation, login flow, token handling, password hashing. Aim for 80%+ coverage. Match existing test patterns."\`
 
 Make your prepared prompt MORE detailed than the user's original request.
 Proceed now.`;
 }
 
 // UI Component
-const handleRunInSubtask = async () => {
-  const wrappedPrompt = wrapForSubtaskExecution(inputValue, session.session_id);
+const handleRunInSubsession = async () => {
+  const wrappedPrompt = wrapForSubsessionExecution(inputValue, session.session_id);
 
   // Send wrapped prompt to agent (same as normal send)
   await sendMessage(wrappedPrompt);
@@ -961,7 +961,7 @@ const handleRunInSubtask = async () => {
   setInputValue('');
 
   // Toast notification
-  message.info('Subtask delegation prompt sent to agent');
+  message.info('Subsession delegation prompt sent to agent');
 };
 
 // Render
@@ -970,9 +970,9 @@ const handleRunInSubtask = async () => {
   <Button
     type="primary"
     icon={<RocketOutlined />}
-    onClick={handleRunInSubtask}
+    onClick={handleRunInSubsession}
   >
-    Run in Subtask
+    Run in Subsession
   </Button>
 </Space>
 ```
@@ -996,7 +996,7 @@ const edges = useMemo(() => {
       target: child.session_id,
       type: 'smoothstep',
       animated: child.status === 'running',
-      label: 'subtask',
+      label: 'subsession',
       style: { stroke: '#1890ff' },
     }));
 }, [sessions]);
@@ -1024,9 +1024,9 @@ const edges = useMemo(() => {
 
 1. ✅ **Create parent session** via UI
 2. ✅ **Type prompt** in SessionDrawer: "Design PostgreSQL auth schema"
-3. ✅ **Click "Run in Subtask"** button
+3. ✅ **Click "Run in Subsession"** button
 4. ✅ **Verify agent receives meta-prompt** (check conversation)
-5. ✅ **Verify agent runs command**: `agor session subtask {id} --prompt "..."`
+5. ✅ **Verify agent runs command**: `agor session subsession {id} --prompt "..."`
 6. ✅ **Verify child session appears** on canvas within 5 seconds
 7. ✅ **Verify edge renders** from parent → child
 8. ✅ **Click into child session** and verify conversation is accessible
@@ -1048,13 +1048,13 @@ const edges = useMemo(() => {
 
 **The Winning Approach: User-Triggered Meta-Prompts**
 
-Instead of hoping agents organically decide to use subtasks, we give users explicit control with a "Run in Subtask" button that wraps their prompt in meta-instructions.
+Instead of hoping agents organically decide to use subsessions, we give users explicit control with a "Run in Subsession" button that wraps their prompt in meta-instructions.
 
 **Why This Works:**
 
 1. **Deterministic** - User intent is clear, no guessing if agent will delegate
 2. **High compliance** - Meta-instructions force the behavior (>90% expected)
-3. **Value-add** - Agent enriches user's prompt before spawning subtask
+3. **Value-add** - Agent enriches user's prompt before spawning subsession
 4. **Simple** - No SDK modifications, system prompt injection, or tool interception needed
 5. **Agent-agnostic** - Works with any agent that has bash/command execution
 
@@ -1064,16 +1064,16 @@ User types: "add tests"
 
 Agent prepares: "Write Jest unit tests for auth module: registration validation, login flow with correct/incorrect credentials, token generation/validation, password hashing security. Aim for 80%+ coverage. Match existing patterns in tests/ directory."
 
-Then spawns: `agor session subtask {id} --prompt "{prepared_prompt}"`
+Then spawns: `agor session subsession {id} --prompt "{prepared_prompt}"`
 
 Result:
 
-- ✅ User gets detailed, contextualized subtask
+- ✅ User gets detailed, contextualized subsession
 - ✅ Full conversation history in child session
 - ✅ Can fork if approach is wrong
-- ✅ Can share subtask with team
+- ✅ Can share subsession with team
 - ✅ Visual genealogy tree on canvas
 
 **The Core Innovation:**
 
-Agor-tracked subtasks turn **ad-hoc delegation** into **persistent, observable, forkable sessions** - making every spawned task a first-class artifact in the session tree.
+Agor-tracked subsessions turn **ad-hoc delegation** into **persistent, observable, forkable sessions** - making every spawned task a first-class artifact in the session tree.

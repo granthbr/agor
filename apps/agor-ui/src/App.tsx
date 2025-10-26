@@ -332,7 +332,7 @@ function AppContent() {
   const handleSpawnSession = async (sessionId: string, prompt: string) => {
     const session = await spawnSession(sessionId as import('@agor/core/types').SessionID, prompt);
     if (session) {
-      message.success('Subtask session spawned successfully!');
+      message.success('Subsession session spawned successfully!');
     } else {
       message.error('Failed to spawn session');
     }

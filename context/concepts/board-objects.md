@@ -30,7 +30,7 @@ This document describes the **parent-child locking** feature for board objects, 
 
 **Zone Triggers with Handlebars:**
 
-- ✅ **Trigger types** - Prompt, Task, Subtask (unified `/sessions/:id/prompt` endpoint)
+- ✅ **Trigger types** - Prompt, Task, Subsession (unified `/sessions/:id/prompt` endpoint)
 - ✅ **Handlebars templates** - Dynamic prompt generation from session data
 - ✅ **Session context** - Access `issue_url`, `pull_request_url`, `description`, and custom context
 - ✅ **Custom context** - User-defined JSON fields accessible via `{{ session.context.* }}`
@@ -429,7 +429,7 @@ Three trigger types are supported (all use the unified `/sessions/:id/prompt` en
 
 1. **Prompt** - Send a message to the session
 2. **Task** - Create a new task (same as prompt)
-3. **Subtask** - Create a subtask (prefixes prompt with `[Subtask]`)
+3. **Subsession** - Create a subsession (prefixes prompt with `[Subsession]`)
 
 ### Handlebars Template Support
 
@@ -455,7 +455,7 @@ Review the code and comment on {{session.issue_url}}
 ```
 
 ```handlebars
-Create a subtask for {{session.description}} - Sprint {{session.context.sprintNumber}}
+Create a subsession for {{session.description}} - Sprint {{session.context.sprintNumber}}
 ```
 
 ```handlebars
@@ -493,7 +493,7 @@ Users can define custom JSON context in Session Settings:
 ```typescript
 // packages/core/src/types/board.ts
 interface ZoneTrigger {
-  type: 'prompt' | 'task' | 'subtask';
+  type: 'prompt' | 'task' | 'subsession';
   text: string; // Handlebars template
 }
 

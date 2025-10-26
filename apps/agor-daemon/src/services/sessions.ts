@@ -95,7 +95,7 @@ export class SessionsService extends DrizzleService<Session, Partial<Session>, S
   /**
    * Custom method: Spawn a child session
    *
-   * Creates a new session for delegating a subtask to another agent.
+   * Creates a new session for delegating a subsession to another agent.
    */
   async spawn(
     id: string,

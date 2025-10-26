@@ -124,7 +124,7 @@ Drop sessions on zones to trigger templated workflows (analyze → develop → r
 
 ### Session Genealogy
 
-Fork sessions to explore alternatives. Spawn subtasks with fresh context. Full ancestry tracking.
+Fork sessions to explore alternatives. Spawn subsessions with fresh context. Full ancestry tracking.
 
 ### Multi-Agent Support
 

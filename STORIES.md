@@ -35,11 +35,11 @@ When I want to start a coding agent session,
 I want a CLI that allows me to specify the agent, the context, and the task,
 so I can start a session with a single command from the terminal.
 
-### Session Subtasks
+### Session Subsessions
 
-`agor session subtask <session-id>`
+`agor session subsession <session-id>`
 
-When I have a complex task that requires focused subtasks,
+When I have a complex task that requires focused subsessions,
 I want to spawn new sessions with specific agents and concepts,
 so I can tackle problems modularly while maintaining relationships to the parent work.
 

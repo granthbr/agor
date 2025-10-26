@@ -172,7 +172,7 @@ Agor is built on 5 primitives:
 
 **Explorations (WIP/Future):**
 
-- `subtask-orchestration.md` - Multi-agent coordination
+- `subsession-orchestration.md` - Multi-agent coordination
 - `async-jobs.md` - Background job processing
 - `single-package.md` - Distribution strategy
 - `docs-website.md` - Documentation site with Nextra

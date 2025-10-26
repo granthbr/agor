@@ -1,6 +1,6 @@
 # Agor MCP Server: Self-Aware Agent Environment
 
-Related: [[subtask-orchestration]], [[agent-integration]], [[mcp-integration]], [[permissions]], [[architecture]]
+Related: [[subsession-orchestration]], [[agent-integration]], [[mcp-integration]], [[permissions]], [[architecture]]
 
 **Status:** Exploration (Ready for Prototyping)
 **Date:** January 2025
@@ -9,7 +9,7 @@ Related: [[subtask-orchestration]], [[agent-integration]], [[mcp-integration]], 
 
 ## TL;DR - Agor as an MCP Server
 
-**Problem:** Agents working in Agor are blind to their environment. They can't introspect sessions, create boards, spawn subtasks, or query the system state without complex CLI commands.
+**Problem:** Agents working in Agor are blind to their environment. They can't introspect sessions, create boards, spawn subsessions, or query the system state without complex CLI commands.
 
 **Solution:** Ship Agor with a **built-in MCP server** that exposes Agor's API as MCP tools. Agents get native access to:
 
@@ -28,11 +28,11 @@ Related: [[subtask-orchestration]], [[agent-integration]], [[mcp-integration]], 
 - ✅ **Self-documenting** - MCP provides tool schemas automatically
 - ✅ **Bridge opportunity** - REST → MCP adapter makes this nearly effortless
 
-**Killer use case:** Subtask orchestration becomes:
+**Killer use case:** Subsession orchestration becomes:
 
 ```typescript
 // Instead of CLI command parsing:
-await agent.bash('agor session subtask 01933f2b --prompt "Design schema"');
+await agent.bash('agor session subsession 01933f2b --prompt "Design schema"');
 
 // Agent uses native MCP tool:
 await agent.mcp('agor.session.spawn', {
@@ -50,9 +50,9 @@ await agent.mcp('agor.session.spawn', {
 **Current State (CLI-based):**
 
 ```typescript
-// Agent wants to spawn a subtask
+// Agent wants to spawn a subsession
 Agent: "I'll delegate the schema design"
-→ Runs bash: agor session subtask 01933f2b --prompt "Design schema"
+→ Runs bash: agor session subsession 01933f2b --prompt "Design schema"
 → Parses stdout for session ID
 → Hope the command succeeds
 → No type safety, error handling is messy
@@ -86,7 +86,7 @@ Agent: Let me create that board for you.
 Agent: "Created board 'Auth Redesign' (01933f5e). Would you like me to
        create a session on this board to start the work?"
 
-User: "Yes, and spawn a subtask for database schema design"
+User: "Yes, and spawn a subsession for database schema design"
 
 Agent: I'll set that up.
 → [Calls agor.session.create tool]
@@ -95,7 +95,7 @@ Agent: I'll set that up.
 → Returns: { sessionId: "01933f7b", status: "running" }
 
 Agent: "Created main session (01933f6a) and spawned schema design
-       subtask (01933f7b). The subtask is running now."
+       subsession (01933f7b). The subsession is running now."
 ```
 
 ---
@@ -335,7 +335,7 @@ export const sessionTools: Tool[] = [
 
   {
     name: 'agor.session.spawn',
-    description: 'Spawn a child session (subtask) from a parent session',
+    description: 'Spawn a child session (subsession) from a parent session',
     inputSchema: {
       type: 'object',
       properties: {
@@ -345,7 +345,7 @@ export const sessionTools: Tool[] = [
         },
         prompt: {
           type: 'string',
-          description: 'Initial prompt for the subtask session',
+          description: 'Initial prompt for the subsession session',
         },
         agent: {
           type: 'string',
@@ -354,11 +354,11 @@ export const sessionTools: Tool[] = [
         },
         zoneId: {
           type: 'string',
-          description: 'Zone to position subtask in (optional)',
+          description: 'Zone to position subsession in (optional)',
         },
         sync: {
           type: 'boolean',
-          description: 'Wait for subtask completion before returning (default: false)',
+          description: 'Wait for subsession completion before returning (default: false)',
         },
       },
       required: ['parentId', 'prompt'],
@@ -593,7 +593,7 @@ Agent: "Based on the context, I'm running in Agor session 019a1dad-fda8-782f-ac1
 
 ```typescript
 // Agent knows its session ID from CLAUDE.md
-// When user clicks "Run in Subtask", agent can reference its own ID:
+// When user clicks "Run in Subsession", agent can reference its own ID:
 
 await mcp('agor.session.spawn', {
   parentId: '019a1dad-fda8-782f-ac1c-0420492785f0', // Agent knows this!
@@ -656,7 +656,7 @@ export async function handleToolCall(toolName: string, args: any) {
 **Example Agent Flow:**
 
 ```
-User: "Create a subtask for schema design"
+User: "Create a subsession for schema design"
 
 Agent sees available tools:
 - agor.session.spawn
@@ -664,7 +664,7 @@ Agent sees available tools:
 - agor.board.create
 - ... (all Agor tools)
 
-Agent: I'll spawn a subtask for you.
+Agent: I'll spawn a subsession for you.
 → [Calls agor.session.spawn tool]
 → {
     parentId: "01933f2b",
@@ -673,7 +673,7 @@ Agent: I'll spawn a subtask for you.
   }
 → Returns: { sessionId: "01933f7c", status: "running" }
 
-Agent: "Created subtask session 01933f7c for schema design. It's running now."
+Agent: "Created subsession session 01933f7c for schema design. It's running now."
 ```
 
 ---
@@ -709,14 +709,14 @@ async function handleCodexToolCall(functionCall: FunctionCall) {
 
 ## Use Cases
 
-### 1. Subtask Orchestration (Primary Win)
+### 1. Subsession Orchestration (Primary Win)
 
 **Before (CLI-based):**
 
 ```typescript
 // Agent meta-prompt must parse CLI output
-Agent runs: agor session subtask 01933f2b --prompt "Design schema"
-Output: "Subtask session created: 01933f7c\nStatus: running"
+Agent runs: agor session subsession 01933f2b --prompt "Design schema"
+Output: "Subsession session created: 01933f7c\nStatus: running"
 Agent parses: sessionId = "01933f7c"
 ```
 
@@ -793,7 +793,7 @@ Agent: "There are 2 other sessions on this board:
 ### 5. Cross-Session Queries
 
 ```
-User: "What did the schema design subtask decide?"
+User: "What did the schema design subsession decide?"
 
 Agent:
 → [Calls agor.session.get]
@@ -807,7 +807,7 @@ Agent:
     ]
   }
 
-Agent: "The schema design subtask created a users table with
+Agent: "The schema design subsession created a users table with
        id, email, password_hash, created_at, and updated_at columns..."
 ```
 
@@ -1207,7 +1207,7 @@ MCP:  agor.session.spawn
 **Option B: Higher-level tools**
 
 ```
-MCP: agor.subtask.create_and_execute
+MCP: agor.subsession.create_and_execute
   → Internally: session.spawn + task.execute + wait_for_completion
 ```
 
@@ -1271,7 +1271,7 @@ await agent.mcp.subscribe('agor://session/01933f7c');
 
 **Agor MCP Server is successful if:**
 
-1. ✅ **Agents can spawn subtasks via MCP**
+1. ✅ **Agents can spawn subsessions via MCP**
    - `agor.session.spawn` tool works reliably
    - No CLI parsing needed
    - Typed responses with error handling
@@ -1284,7 +1284,7 @@ await agent.mcp.subscribe('agor://session/01933f7c');
 
 3. ✅ **Session context flows correctly**
    - MCP tools know which session is calling
-   - Permissions enforced (can't spawn subtasks for other users' sessions)
+   - Permissions enforced (can't spawn subsessions for other users' sessions)
    - User attribution preserved
 
 4. ✅ **Performance is acceptable**
@@ -1325,7 +1325,7 @@ await agent.mcp.subscribe('agor://session/01933f7c');
 2. ✅ Implement bridge for session service methods
 3. ✅ Add session context extraction (env var → session ID)
 4. ✅ Test: `agor.session.create`, `agor.session.list`, `agor.session.get`
-5. ✅ Test: `agor.session.spawn` (critical for subtask orchestration)
+5. ✅ Test: `agor.session.spawn` (critical for subsession orchestration)
 
 **Deliverable:** Agents can manage sessions via MCP.
 
@@ -1370,7 +1370,7 @@ await agent.mcp.subscribe('agor://session/01933f7c');
 
 1. ✅ Document MCP setup in `context/mcp-integration.md`
 2. ✅ Add example agent conversations using MCP
-3. ✅ Update subtask orchestration doc to reference MCP approach
+3. ✅ Update subsession orchestration doc to reference MCP approach
 4. ✅ Add troubleshooting guide
 
 **Deliverable:** Users can set up and use MCP server.
@@ -1436,7 +1436,7 @@ agor://worktree/01933f6a/files       → Files in worktree
 Pre-defined prompt templates for common operations:
 
 ```
-agor://prompts/spawn-subtask
+agor://prompts/spawn-subsession
 agor://prompts/create-board
 agor://prompts/duplicate-worktree
 ```
@@ -1447,35 +1447,35 @@ agor://prompts/duplicate-worktree
 
 ---
 
-## Integration with Subtask Orchestration
+## Integration with Subsession Orchestration
 
-**From `subtask-orchestration.md`:**
+**From `subsession-orchestration.md`:**
 
 The user-triggered meta-prompt approach requires agents to:
 
-1. Prepare detailed subtask prompt
-2. Execute: `agor session subtask {id} --prompt "..."`
+1. Prepare detailed subsession prompt
+2. Execute: `agor session subsession {id} --prompt "..."`
 3. Parse CLI output for session ID
 
 **With MCP, this becomes:**
 
-1. Prepare detailed subtask prompt ✅ (still valuable!)
+1. Prepare detailed subsession prompt ✅ (still valuable!)
 2. Call: `agor.session.spawn({ parentId, prompt })`
 3. Receive: `{ sessionId, status }` ✅ (typed response!)
 
 **Updated Meta-Prompt:**
 
 ```typescript
-function wrapForSubtaskExecution(userPrompt: string, sessionId: string): string {
-  return `SUBTASK DELEGATION MODE
+function wrapForSubsessionExecution(userPrompt: string, sessionId: string): string {
+  return `SUBSESSION DELEGATION MODE
 
-User wants this done in a subtask:
+User wants this done in a subsession:
 """
 ${userPrompt}
 """
 
 YOUR TASK:
-1. Prepare a detailed, comprehensive prompt for a subtask agent
+1. Prepare a detailed, comprehensive prompt for a subsession agent
 2. Use the agor.session.spawn MCP tool:
    → parentId: "${sessionId}"
    → prompt: "YOUR_PREPARED_PROMPT"
@@ -1507,7 +1507,7 @@ Proceed now.`;
 
 4. **Permissions reuse existing system** - No new permission model needed
 
-5. **Subtask orchestration gets cleaner** - No CLI parsing, typed responses, better error handling
+5. **Subsession orchestration gets cleaner** - No CLI parsing, typed responses, better error handling
 
 6. **Agent SDK agnostic** - MCP works with Claude, Codex, Gemini (via function calling)
 
@@ -1523,7 +1523,7 @@ Proceed now.`;
 
 ## Related Explorations
 
-- [[subtask-orchestration]] - User-triggered subtasks (enhanced by MCP)
+- [[subsession-orchestration]] - User-triggered subsessions (enhanced by MCP)
 - [[agent-integration]] - Agent SDK integration patterns
 - [[mcp-integration]] - MCP server configuration (existing doc)
 - [[permissions]] - Permission system architecture
@@ -1541,9 +1541,9 @@ Proceed now.`;
 6. ✅ **Configure Claude Code** to use Agor MCP
 7. ✅ **Verify agent sees tools** (call `tools/list`)
 8. ✅ **Test tool execution** (agent calls `agor.session.create`)
-9. ✅ **Test subtask spawning** (agent calls `agor.session.spawn`)
+9. ✅ **Test subsession spawning** (agent calls `agor.session.spawn`)
 10. ✅ **Measure performance** (tool call latency <1s)
-11. ✅ **Test permissions** (agent can't spawn subtasks for other users)
+11. ✅ **Test permissions** (agent can't spawn subsessions for other users)
 12. ✅ **Test error handling** (invalid inputs return clear errors)
 
 ---
@@ -1554,7 +1554,7 @@ Proceed now.`;
 
 By exposing Agor's API as MCP tools, agents can:
 
-- ✅ Spawn subtasks without CLI parsing
+- ✅ Spawn subsessions without CLI parsing
 - ✅ Introspect sessions, boards, worktrees
 - ✅ Create/modify Agor entities naturally
 - ✅ Query cross-session data
@@ -1569,11 +1569,11 @@ By exposing Agor's API as MCP tools, agents can:
 
 **MVP effort: ~31 hours** (1 week of focused work)
 
-**Primary win: Subtask orchestration** - Agents can spawn Agor-tracked subtasks via typed MCP tools instead of bash + string parsing.
+**Primary win: Subsession orchestration** - Agents can spawn Agor-tracked subsessions via typed MCP tools instead of bash + string parsing.
 
 ---
 
-_For subtask orchestration integration: see `subtask-orchestration.md`_
+_For subsession orchestration integration: see `subsession-orchestration.md`_
 _For agent SDK patterns: see `agent-integration.md`_
 _For MCP server configuration: see `mcp-integration.md`_
 
@@ -1726,7 +1726,7 @@ Agent: "Let me see all running sessions"
 }
 ```
 
-**Use case:** Agent checks details of a related session before spawning subtask
+**Use case:** Agent checks details of a related session before spawning subsession
 
 ---
 
@@ -2023,7 +2023,7 @@ Agents should understand the task context within sessions.
 **Note:** Implement these AFTER first batch is stable.
 
 - [ ] `agor_sessions_create` - Create new session
-- [ ] `agor_sessions_spawn` - Spawn child session (subtask)
+- [ ] `agor_sessions_spawn` - Spawn child session (subsession)
 - [ ] `agor_sessions_fork` - Fork session at specific point
 - [ ] `agor_sessions_update` - Update session metadata (title, description)
 - [ ] `agor_boards_create` - Create new board

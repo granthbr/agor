@@ -30,7 +30,7 @@ Build the orchestration layer for AI-assisted development. Instead of competing 
 - **Agent Orchestration Layer** - Integrates with Claude Code, Codex, and soon Gemini, via an extensible SDK. Centralized MCP configuration—connect once, use across all tools.
 - **Multiplayer Spatial Canvas** - Real-time collaboration with cursor broadcasting and facepiles. Sessions live on a dynamic board—cluster by project, phase, or purpose.
 - **Context-Aware Development** - Manage deliberate context via `context/` folder of markdown files. Dynamically load modular context blocks per session.
-- **Native Session Forking & Subtask Forcing** - Fork any session to explore alternatives. Spawn subtasks with fresh context windows. Full introspection and genealogy tracking.
+- **Native Session Forking & Subsession Forcing** - Fork any session to explore alternatives. Spawn subsessions with fresh context windows. Full introspection and genealogy tracking.
 - **Zone Triggers — Workflows Made Spatial** - Define zones on your board that trigger templated prompts when sessions are dropped. Build kanban-style flows or custom pipelines.
 - **Git Worktree Management + Environments** - Every session maps to an isolated git worktree—no branch conflicts. Optionally spin up dev environments per worktree with automatic port management and health monitoring. Run multiple feature branches in parallel with their own running apps.
 - **Real-Time Strategy for AI Teams** - Coordinate agentic work like a multiplayer RTS. Watch teammates or agents move across tasks live.
@@ -54,7 +54,7 @@ Session:
 
   # Genealogy
   forked_from_session_id: str | None    # Divergent path
-  parent_session_id: str | None         # Spawned subtask
+  parent_session_id: str | None         # Spawned subsession
 ```
 
 **Two Relationship Types:**
@@ -66,7 +66,7 @@ Session:
   └─ Session B (fork): "Try GraphQL instead"
   ```
 
-- **Spawn** - New context window, delegated subtask
+- **Spawn** - New context window, delegated subsession
   ```
   Session A: "Build auth system"
   └─ Session C (spawn): "Design DB schema"
@@ -293,7 +293,7 @@ agor session fork <session-a> --from-task 1
 - Session B created (forked from design phase)
 - Task 3: Implement OAuth instead → Different approach, same context
 
-**Phase 3: Spawn for Subtask**
+**Phase 3: Spawn for Subsession**
 
 ```bash
 agor session spawn <session-a> \
