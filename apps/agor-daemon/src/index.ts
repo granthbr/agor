@@ -53,6 +53,8 @@ function isPaginated<T>(result: T[] | Paginated<T>): result is Paginated<T> {
   return !Array.isArray(result) && 'data' in result && 'total' in result;
 }
 
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import cors from 'cors';
 import express from 'express';
 import jwt from 'jsonwebtoken';
@@ -99,7 +101,18 @@ interface FeathersSocket extends Socket {
   };
 }
 
-const DB_PATH = process.env.AGOR_DB_PATH || 'file:~/.agor/agor.db';
+// Expand ~ to home directory in database path
+const expandPath = (path: string): string => {
+  if (path.startsWith('~/')) {
+    return join(homedir(), path.slice(2));
+  }
+  if (path.startsWith('file:~/')) {
+    return `file:${join(homedir(), path.slice(7))}`;
+  }
+  return path;
+};
+
+const DB_PATH = expandPath(process.env.AGOR_DB_PATH || 'file:~/.agor/agor.db');
 
 // Main async function
 async function main() {
@@ -119,11 +132,12 @@ async function main() {
 
   const apiKey = config.credentials?.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
 
+  // Note: API key is optional - it can be configured per-tool or use Claude CLI's auth
+  // Only show info message if no key is found (not a warning since it's not required)
   if (!apiKey) {
-    console.warn('⚠️  No ANTHROPIC_API_KEY found in config or environment');
-    console.warn('   Run: agor config set credentials.ANTHROPIC_API_KEY <your-key>');
-    console.warn('   Or set ANTHROPIC_API_KEY environment variable');
-    console.warn('   Note: Claude CLI can also use its own stored credentials (~/.claude/)');
+    console.log('ℹ️  No ANTHROPIC_API_KEY in config (optional - can be set per-tool)');
+    console.log('   Claude Code can use its own credentials (~/.claude/)');
+    console.log('   Or set: agor config set credentials.ANTHROPIC_API_KEY <key>');
   }
   // NOTE: Do NOT set process.env.ANTHROPIC_API_KEY here!
   // The Claude CLI has its own authentication system and setting the env var
@@ -314,15 +328,51 @@ async function main() {
     return app.channel('everybody');
   });
 
-  // Initialize database
+  // Initialize database (auto-create if it doesn't exist)
   console.log(`📦 Connecting to database: ${DB_PATH}`);
+
+  // Extract file path from DB_PATH (remove 'file:' prefix if present)
+  const dbFilePath = DB_PATH.startsWith('file:') ? DB_PATH.slice(5) : DB_PATH;
+  const dbDir = dbFilePath.substring(0, dbFilePath.lastIndexOf('/'));
+
+  // Ensure database directory exists
+  const { mkdir, access } = await import('node:fs/promises');
+  const { constants } = await import('node:fs');
+
+  try {
+    await access(dbDir, constants.F_OK);
+  } catch {
+    console.log(`📁 Creating database directory: ${dbDir}`);
+    await mkdir(dbDir, { recursive: true });
+  }
+
+  // Check if database file exists
+  let dbExists = false;
+  try {
+    await access(dbFilePath, constants.F_OK);
+    dbExists = true;
+  } catch {
+    console.log('🆕 Database does not exist - will create on first connection');
+  }
+
   const db = createDatabase({ url: DB_PATH });
 
   // Run migrations (safe for existing databases - uses CREATE TABLE IF NOT EXISTS)
-  console.log('🔄 Running database migrations...');
-  const { initializeDatabase } = await import('@agor/core/db');
+  if (!dbExists) {
+    console.log('🔄 Initializing new database...');
+  } else {
+    console.log('🔄 Running database migrations...');
+  }
+  const { initializeDatabase, seedInitialData } = await import('@agor/core/db');
   await initializeDatabase(db);
-  console.log('✅ Database initialized');
+
+  // Seed initial data if this is a fresh database
+  if (!dbExists) {
+    console.log('🌱 Seeding initial data...');
+    await seedInitialData(db);
+  }
+
+  console.log('✅ Database ready');
 
   // Register core services
   app.use('/sessions', createSessionsService(db));
@@ -1531,6 +1581,7 @@ async function main() {
   // Sessions are accessed through worktree cards. No cleanup needed on session deletion.
 
   // Health check endpoint
+  // NOTE: Keep this lightweight - it's called frequently by monitoring systems
   app.use('/health', {
     async find() {
       return {

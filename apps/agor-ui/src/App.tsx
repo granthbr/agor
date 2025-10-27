@@ -83,6 +83,7 @@ function AppContent() {
   const [welcomeModalOpen, setWelcomeModalOpen] = useState(false);
   const [settingsTabToOpen, setSettingsTabToOpen] = useState<string | null>(null);
   const [openNewWorktree, setOpenNewWorktree] = useState(false);
+  const [inOnboardingFlow, setInOnboardingFlow] = useState(false);
 
   // Show welcome modal if user hasn't completed onboarding
   useEffect(() => {
@@ -202,7 +203,15 @@ function AppContent() {
   }
 
   // Show connection error
+  // BUT: If auth is required and anonymous auth failed, show login page instead
   if (connectionError) {
+    const isAnonymousAuthError = connectionError.includes('Anonymous authentication failed');
+
+    if (authConfig?.requireAuth && isAnonymousAuthError && !authenticated) {
+      // Anonymous auth failed but auth is required - show login page
+      return <LoginPage onLogin={login} error={authError || connectionError} />;
+    }
+
     return (
       <ConfigProvider theme={{ algorithm: theme.darkAlgorithm }}>
         <div
@@ -779,6 +788,7 @@ function AppContent() {
   // Handle onboarding dismissal
   const handleDismissOnboarding = async () => {
     if (!client || !user) return;
+    setInOnboardingFlow(false);
     try {
       await client.service('users').patch(user.user_id, {
         onboarding_completed: true,
@@ -792,18 +802,38 @@ function AppContent() {
 
   // Welcome modal action handlers - open settings to relevant tab
   const handleWelcomeAddRepo = () => {
+    setInOnboardingFlow(true);
     setWelcomeModalOpen(false);
     setSettingsTabToOpen('repos');
   };
 
   const handleWelcomeCreateWorktree = () => {
+    setInOnboardingFlow(true);
     setWelcomeModalOpen(false);
     setOpenNewWorktree(true);
   };
 
   const handleWelcomeNewSession = () => {
+    setInOnboardingFlow(true);
     setWelcomeModalOpen(false);
     // TODO: Should this open a new session modal instead? For now just close.
+  };
+
+  // Re-open welcome modal after completing sub-actions during onboarding
+  const handleSettingsClose = () => {
+    setSettingsTabToOpen(null);
+    // Re-open welcome modal if still in onboarding flow
+    if (inOnboardingFlow && user && !user.onboarding_completed) {
+      setWelcomeModalOpen(true);
+    }
+  };
+
+  const handleNewWorktreeModalClose = () => {
+    setOpenNewWorktree(false);
+    // Re-open welcome modal if still in onboarding flow
+    if (inOnboardingFlow && user && !user.onboarding_completed) {
+      setWelcomeModalOpen(true);
+    }
   };
 
   // Render main app
@@ -839,9 +869,9 @@ function AppContent() {
         sessionMcpServerIds={sessionMcpServerIds}
         initialBoardId={boards[0]?.board_id}
         openSettingsTab={settingsTabToOpen}
-        onSettingsClose={() => setSettingsTabToOpen(null)}
+        onSettingsClose={handleSettingsClose}
         openNewWorktreeModal={openNewWorktree}
-        onNewWorktreeModalClose={() => setOpenNewWorktree(false)}
+        onNewWorktreeModalClose={handleNewWorktreeModalClose}
         onCreateSession={handleCreateSession}
         onForkSession={handleForkSession}
         onSpawnSession={handleSpawnSession}

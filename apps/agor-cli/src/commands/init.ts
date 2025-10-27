@@ -8,7 +8,8 @@
 import { access, constants, mkdir, readdir, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { setConfigValue } from '@agor/core/config';
+import { isDaemonRunning } from '@agor/core/api';
+import { loadConfig, setConfigValue } from '@agor/core/config';
 import { createDatabase, createUser, initializeDatabase, seedInitialData } from '@agor/core/db';
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
@@ -324,9 +325,26 @@ export default class Init extends Command {
       this.log('');
     }
 
+    // Check if daemon is running
+    const config = await loadConfig();
+    const host = config.daemon?.host || 'localhost';
+    const port = config.daemon?.port || 3030;
+    const daemonRunning = await isDaemonRunning(`http://${host}:${port}`);
+
     this.log(chalk.bold('Next steps:'));
-    this.log("   - Run 'agor daemon' to start the daemon");
-    this.log("   - Run 'agor session list' to view all sessions");
+    if (daemonRunning) {
+      this.log(chalk.yellow('   ⚠️  Daemon is currently running with old configuration'));
+      this.log(chalk.yellow('   Please restart the daemon to apply changes:'));
+      this.log('');
+      this.log('   1. Stop the daemon (Ctrl+C in the daemon terminal)');
+      this.log('   2. Restart: cd apps/agor-daemon && pnpm dev');
+      this.log('   3. Or: pnpm agor daemon');
+    } else {
+      this.log('   - Start the daemon: pnpm agor daemon');
+      this.log('   - Or in dev mode: cd apps/agor-daemon && pnpm dev');
+    }
+    this.log('');
+    this.log('   - View sessions: pnpm agor session list');
     this.log('');
   }
 
@@ -341,7 +359,7 @@ export default class Init extends Command {
         type: 'confirm',
         name: 'enableAuth',
         message: 'Enable authentication and multiplayer features?',
-        default: false,
+        default: true,
       },
     ]);
 
