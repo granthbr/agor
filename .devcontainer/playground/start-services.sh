@@ -29,6 +29,20 @@ if [ ! -d ~/.agor ]; then
   echo ""
 fi
 
-# Start daemon in background
+# Start daemon (detached, runs in background)
 echo "🔧 Starting daemon on :3030..."
 agor daemon start
+
+echo ""
+echo "🚀 Agor is running!"
+echo ""
+echo "   Daemon: http://localhost:3030"
+echo ""
+echo "   (Codespaces auto-forwards this port)"
+echo ""
+echo "📝 View logs:"
+echo "   agor daemon logs"
+echo ""
+
+# Keep script alive (required for postStartCommand)
+sleep infinity

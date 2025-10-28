@@ -15,6 +15,7 @@ import type {
 import { Modal, Tabs } from 'antd';
 import { useState } from 'react';
 import { WorktreeModal } from '../WorktreeModal';
+import { AboutTab } from './AboutTab';
 import { AgenticToolsTab } from './AgenticToolsTab';
 import { BoardsTable } from './BoardsTable';
 import { MCPServersTable } from './MCPServersTable';
@@ -26,6 +27,7 @@ export interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
   client: AgorClient | null; // Still needed for WorktreeModal
+  currentUser?: User | null; // Current logged-in user
   boards: Board[];
   boardObjects: BoardEntityObject[];
   repos: Repo[];
@@ -69,6 +71,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   open,
   onClose,
   client,
+  currentUser,
   boards,
   boardObjects,
   repos,
@@ -208,6 +211,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 onCreate={onCreateUser}
                 onUpdate={onUpdateUser}
                 onDelete={onDeleteUser}
+              />
+            ),
+          },
+          {
+            key: 'about',
+            label: 'About',
+            children: (
+              <AboutTab
+                connected={client?.io?.connected ?? false}
+                connectionError={undefined}
+                isAdmin={currentUser?.role === 'admin'}
               />
             ),
           },

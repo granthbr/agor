@@ -506,6 +506,7 @@ export const App: React.FC<AppProps> = ({
           onSettingsClose?.();
         }}
         client={client}
+        currentUser={user}
         boards={boards}
         boardObjects={boardObjects}
         repos={repos}
