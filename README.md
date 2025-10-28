@@ -33,6 +33,35 @@ agor open
 
 ---
 
+## See It In Action
+
+<div align="center">
+  <table>
+    <tr>
+      <td width="50%">
+        <img src="https://github.com/mistercrunch/agor/releases/download/v0.3.15/Area.gif" alt="Spatial 2D Canvas"/>
+        <p align="center"><em>Spatial canvas with worktrees and zones</em></p>
+      </td>
+      <td width="50%">
+        <img src="https://github.com/mistercrunch/agor/releases/download/v0.3.15/Convo.gif" alt="AI Conversation in Action"/>
+        <p align="center"><em>Task-centric AI conversations</em></p>
+      </td>
+    </tr>
+    <tr>
+      <td width="50%">
+        <img src="https://github.com/mistercrunch/agor/releases/download/v0.3.15/Settings.gif" alt="Settings and Configuration"/>
+        <p align="center"><em>MCP servers and worktree management</em></p>
+      </td>
+      <td width="50%">
+        <img src="https://github.com/mistercrunch/agor/releases/download/v0.3.15/Social.gif" alt="Real-time Multiplayer"/>
+        <p align="center"><em>Live collaboration with cursors and comments</em></p>
+      </td>
+    </tr>
+  </table>
+</div>
+
+---
+
 ## What It Does
 
 - **Agent orchestration** - Run Claude Code, Codex, Gemini from one interface
