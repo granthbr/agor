@@ -1,4 +1,4 @@
-<img src="https://github.com/user-attachments/assets/e34f3d25-71dd-4084-8f3e-4f1c73381c66" alt="Agor Logo" width="320" />
+<img src="https://github.com/mistercrunch/agor/releases/download/v0.3.15/logo_circle.png" alt="Agor Logo" width="320" />
 
 # Agor
 
@@ -44,7 +44,7 @@ agor open
       </td>
       <td width="50%">
         <img src="https://github.com/mistercrunch/agor/releases/download/v0.3.15/Convo.gif" alt="AI Conversation in Action"/>
-        <p align="center"><em>Task-centric AI conversations</em></p>
+        <p align="center"><em>Rich web UI for AI conversations</em></p>
       </td>
     </tr>
     <tr>
@@ -59,6 +59,8 @@ agor open
     </tr>
   </table>
 </div>
+
+**[→ Watch unscripted demo on YouTube](https://www.youtube.com/watch?v=qiYHw20zjzE)** (13 minutes)
 
 ---
 

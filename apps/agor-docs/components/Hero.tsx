@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import React from 'react';
+import { GifGallery } from './GifGallery';
 import styles from './Hero.module.css';
 import { ParticleBackground } from './ParticleBackground';
 
@@ -45,6 +46,11 @@ export function Hero({
             >
               View on GitHub →
             </Link>
+          </div>
+
+          {/* GIF Grid */}
+          <div style={{ marginTop: '100px' }}>
+            <GifGallery />
           </div>
         </div>
 
