@@ -829,9 +829,12 @@ const SessionCanvas = ({
                   `📌 Pinned worktree ${nodeId.substring(0, 8)} to zone "${zoneData.label}"`
                 );
 
-                // Handle trigger if zone has one
+                // Only trigger if zone assignment changed (not already pinned to this zone)
+                const zoneChanged = !wasPinned || existingBoardObject?.zone_id !== zoneId;
+
+                // Handle trigger if zone has one AND zone assignment changed
                 const trigger = zoneData.trigger;
-                if (trigger) {
+                if (trigger && zoneChanged) {
                   if (trigger.behavior === 'always_new') {
                     // Always_new: Auto-create new root session and apply trigger
                     console.log('⚡ always_new behavior - creating new session...');
