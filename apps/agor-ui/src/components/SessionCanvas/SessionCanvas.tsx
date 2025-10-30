@@ -1,5 +1,5 @@
 import type { AgorClient } from '@agor/core/api';
-import type { BoardID, MCPServer, User, WorktreeID, ZoneTrigger } from '@agor/core/types';
+import type { BoardID, MCPServer, User, UserID, WorktreeID, ZoneTrigger } from '@agor/core/types';
 import { BorderOutlined, CommentOutlined, DeleteOutlined, SelectOutlined } from '@ant-design/icons';
 import { Button, Input, Modal, Popover, Typography, theme } from 'antd';
 import Handlebars from 'handlebars';
@@ -533,7 +533,7 @@ const SessionCanvas = ({
 
         if (rel.parent_type === 'zone') {
           // Parent is a zone
-          const info = getZoneParentInfo(rel.parent_id, board);
+          const info = getZoneParentInfo(rel.parent_id, board ?? undefined);
           parentId = info.parentId;
           parentLabel = info.parentLabel;
           parentColor = info.parentColor;
@@ -1041,14 +1041,14 @@ const SessionCanvas = ({
                   `⚠️ Zone ${parentId} not found for comment ${comment_id}, using absolute position`
                 );
                 commentData.position = { absolute: position };
-                commentData.worktree_id = null;
+                commentData.worktree_id = undefined;
               }
             } else if (parentId && parentType === 'worktree') {
               // Comment pinned to worktree - find worktree node for position
               const worktreeNode = currentNodes.find(n => n.id === parentId); // No prefix for worktree IDs
               if (worktreeNode) {
                 const worktreeAbsPos = getAbsoluteNodePosition(worktreeNode, currentNodes);
-                commentData.worktree_id = parentId;
+                commentData.worktree_id = parentId as WorktreeID;
                 commentData.position = {
                   relative: {
                     parent_id: parentId,
@@ -1063,7 +1063,7 @@ const SessionCanvas = ({
                   `⚠️ Worktree ${parentId} not found for comment ${comment_id}, using absolute position`
                 );
                 commentData.position = { absolute: position };
-                commentData.worktree_id = null;
+                commentData.worktree_id = undefined;
               }
             } else {
               // Free-floating comment - use absolute positioning
@@ -1071,7 +1071,7 @@ const SessionCanvas = ({
                 absolute: position,
               };
               // Clear worktree_id if it was previously pinned
-              commentData.worktree_id = null;
+              commentData.worktree_id = undefined;
             }
 
             await client.service('board-comments').patch(comment_id, commentData);
@@ -1259,7 +1259,7 @@ const SessionCanvas = ({
       // Prepare comment data based on placement target
       const commentData: BoardCommentCreate = {
         board_id: board.board_id,
-        created_by: currentUserId,
+        created_by: currentUserId as UserID,
         content: commentInput.trim(),
         resolved: false,
         edited: false,
@@ -1269,7 +1269,7 @@ const SessionCanvas = ({
       if (worktreeNode) {
         // Comment pinned to worktree - use FK + relative positioning
         const worktreeId = worktreeNode.id; // Worktree ID has no prefix
-        commentData.worktree_id = worktreeId;
+        commentData.worktree_id = worktreeId as WorktreeID;
         commentData.position = {
           relative: {
             parent_id: worktreeId,

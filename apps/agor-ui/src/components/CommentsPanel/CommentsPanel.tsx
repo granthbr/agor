@@ -693,9 +693,6 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
           <Collapse
             defaultActiveKey={Object.keys(groupedThreads)}
             style={{ border: 'none', backgroundColor: 'transparent' }}
-            styles={{
-              content: { padding: '4px 0' }, // Reduced outer padding
-            }}
             items={sortedGroupEntries.map(([groupKey, group]) => ({
               key: groupKey,
               label: (

@@ -7,6 +7,7 @@
 
 import type { Node } from 'reactflow';
 import { getAbsoluteNodePosition } from './nodePositionUtils';
+import type { ReactFlowNode } from './reactFlowTypes';
 
 export interface CollisionResult {
   worktreeNode?: Node;
@@ -43,8 +44,9 @@ export function findIntersectingObjects(
 
     // Use measured dimensions (React Flow calculates from DOM)
     // Fall back to width/height props if not yet measured
-    const nodeWidth = node.measured?.width || node.width || 0;
-    const nodeHeight = node.measured?.height || node.height || 0;
+    const rfNode = node as ReactFlowNode;
+    const nodeWidth = rfNode.measured?.width || node.width || 0;
+    const nodeHeight = rfNode.measured?.height || node.height || 0;
 
     // Get absolute position (accounting for parent transforms)
     const { x: nodeX, y: nodeY } = getAbsoluteNodePosition(node, allNodes);
