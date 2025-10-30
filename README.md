@@ -1,4 +1,4 @@
-<img src=".github/logo.png" alt="Agor Logo" width="160" />
+<img src=".github/logo_circle.png" alt="Agor Logo" width="160" />
 
 # Agor
 
