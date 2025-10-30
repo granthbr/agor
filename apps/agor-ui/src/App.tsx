@@ -98,7 +98,8 @@ function AppContent() {
       onboarding_completed: currentUser?.onboarding_completed,
     });
 
-    if (!loading && currentUser && !currentUser.onboarding_completed) {
+    // Only show modal if onboarding_completed is explicitly false (not undefined)
+    if (!loading && currentUser && currentUser.onboarding_completed === false) {
       console.log('[Onboarding] Showing welcome modal for', currentUser.email);
       setWelcomeModalOpen(true);
     }
