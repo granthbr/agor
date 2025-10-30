@@ -510,7 +510,10 @@ const SessionDrawer = ({
                 return;
               }
               e.preventDefault();
-              handleSendPrompt();
+              // Respect same disabled conditions as Send button (isRunning || !inputValue.trim())
+              if (!isRunning && inputValue.trim()) {
+                handleSendPrompt();
+              }
             }}
           />
           <Space style={{ width: '100%', justifyContent: 'space-between' }}>
