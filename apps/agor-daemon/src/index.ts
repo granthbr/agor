@@ -1103,7 +1103,7 @@ async function main() {
 
   // SECURITY: Simple in-memory rate limiter for authentication endpoints
   const authAttempts = new Map<string, { count: number; resetAt: number }>();
-  const AUTH_RATE_LIMIT = 5; // Max attempts
+  const AUTH_RATE_LIMIT = 50; // Max attempts (increased for development/multiple tabs)
   const AUTH_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 
   const checkAuthRateLimit = (identifier: string): boolean => {
@@ -1152,7 +1152,13 @@ async function main() {
           // Only rate limit external requests (not internal service calls)
           if (context.params.provider) {
             // biome-ignore lint/suspicious/noExplicitAny: FeathersJS request params are untyped
-            const identifier = data?.email || (context.params as any).ip || 'unknown';
+            const params = context.params as any;
+            const ip =
+              params.ip ||
+              params.headers?.['x-forwarded-for']?.split(',')[0] ||
+              params.connection?.remoteAddress ||
+              'unknown';
+            const identifier = data?.email || ip;
 
             if (!checkAuthRateLimit(identifier)) {
               console.warn(`⚠️  Rate limit exceeded for authentication attempt: ${identifier}`);
@@ -1204,7 +1210,13 @@ async function main() {
       // SECURITY: Rate limit refresh token requests
       if (params?.provider) {
         // biome-ignore lint/suspicious/noExplicitAny: FeathersJS request params are untyped
-        const identifier = (params as any).ip || 'unknown';
+        const p = params as any;
+        const ip =
+          p.ip ||
+          p.headers?.['x-forwarded-for']?.split(',')[0] ||
+          p.connection?.remoteAddress ||
+          'unknown';
+        const identifier = ip;
         if (!checkAuthRateLimit(identifier)) {
           console.warn(`⚠️  Rate limit exceeded for token refresh: ${identifier}`);
           throw new Error('Too many token refresh attempts. Please try again in 15 minutes.');
@@ -2093,12 +2105,22 @@ async function main() {
     // biome-ignore lint/suspicious/noExplicitAny: Service type not compatible with Express
   } as any);
 
-  // GET /worktrees/:id/logs - Get environment logs
-  app.use('/worktrees/:id/logs', {
-    async find(_data: unknown, params: RouteParams) {
-      ensureMinimumRole(params, 'member', 'view worktree logs');
-      const id = params.route?.id;
-      if (!id) throw new Error('Worktree ID required');
+  // GET /worktrees/logs?worktree_id=xxx - Get environment logs
+  app.use('/worktrees/logs', {
+    async find(params: Params) {
+      console.log('📋 Logs endpoint called');
+
+      ensureMinimumRole(params || {}, 'member', 'view worktree logs');
+
+      // Extract worktree ID from query params
+      const id = params?.query?.worktree_id;
+
+      if (!id) {
+        console.error('❌ No worktree_id in query params');
+        throw new Error('worktree_id query parameter required');
+      }
+
+      console.log('✅ Found worktree ID:', id);
       return worktreesService.getLogs(id as import('@agor/core/types').WorktreeID, params);
     },
     // biome-ignore lint/suspicious/noExplicitAny: Service type not compatible with Express

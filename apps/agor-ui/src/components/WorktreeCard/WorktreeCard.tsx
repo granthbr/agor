@@ -45,6 +45,7 @@ interface WorktreeCardProps {
   onOpenTerminal?: (commands: string[]) => void;
   onStartEnvironment?: (worktreeId: string) => void;
   onStopEnvironment?: (worktreeId: string) => void;
+  onViewLogs?: (worktreeId: string) => void;
   onUnpin?: (worktreeId: string) => void;
   isPinned?: boolean;
   zoneName?: string;
@@ -69,6 +70,7 @@ const WorktreeCard = ({
   onOpenTerminal,
   onStartEnvironment,
   onStopEnvironment,
+  onViewLogs,
   onUnpin,
   isPinned = false,
   zoneName,
@@ -413,6 +415,7 @@ const WorktreeCard = ({
             onEdit={() => onOpenSettings?.(worktree.worktree_id)}
             onStartEnvironment={onStartEnvironment}
             onStopEnvironment={onStopEnvironment}
+            onViewLogs={onViewLogs}
           />
         </Space>
       </div>

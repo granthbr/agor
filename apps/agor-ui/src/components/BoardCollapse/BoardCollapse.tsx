@@ -43,7 +43,7 @@ export const BoardCollapse: React.FC<BoardCollapseProps> = ({ items, defaultActi
           </div>
         ),
         style: {
-          marginBottom: 8,
+          marginBottom: 0,
           backgroundColor: token.colorBgContainer,
           borderRadius: 0,
           border: `1px solid ${token.colorBorder}`,

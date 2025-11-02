@@ -15,6 +15,7 @@ import {
   CodeOutlined,
   CopyOutlined,
   EditOutlined,
+  FileTextOutlined,
   LoadingOutlined,
   PlayCircleOutlined,
   PoweroffOutlined,
@@ -41,6 +42,7 @@ import {
   getEnvironmentState,
   getEnvironmentStateDescription,
 } from '../../../utils/environmentState';
+import { EnvironmentLogsModal } from '../../EnvironmentLogsModal';
 
 const { Paragraph } = Typography;
 const { TextArea } = Input;
@@ -164,6 +166,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
     repo.environment_config?.health_check?.url_template || ''
   );
   const [appUrl, setAppUrl] = useState(repo.environment_config?.app_url_template || '');
+  const [logsCommand, setLogsCommand] = useState(repo.environment_config?.logs_command || '');
 
   // Custom context state (editable)
   const [isEditingContext, setIsEditingContext] = useState(false);
@@ -180,6 +183,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
     worktree.environment_instance?.last_health_check
   );
   const [processInfo, setProcessInfo] = useState(worktree.environment_instance?.process);
+  const [logsModalOpen, setLogsModalOpen] = useState(false);
 
   // Sync state when worktree prop changes
   useEffect(() => {
@@ -253,14 +257,16 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
 
   // Check if template has unsaved changes
   const hasTemplateChanges = useMemo(() => {
-    if (!repo.environment_config) return upCommand || downCommand || healthCheckUrl || appUrl;
+    if (!repo.environment_config)
+      return upCommand || downCommand || healthCheckUrl || appUrl || logsCommand;
     return (
       upCommand !== repo.environment_config.up_command ||
       downCommand !== repo.environment_config.down_command ||
       healthCheckUrl !== (repo.environment_config.health_check?.url_template || '') ||
-      appUrl !== (repo.environment_config.app_url_template || '')
+      appUrl !== (repo.environment_config.app_url_template || '') ||
+      logsCommand !== (repo.environment_config.logs_command || '')
     );
-  }, [upCommand, downCommand, healthCheckUrl, appUrl, repo.environment_config]);
+  }, [upCommand, downCommand, healthCheckUrl, appUrl, logsCommand, repo.environment_config]);
 
   // Build template context for preview
   const templateContext = useMemo(() => {
@@ -310,6 +316,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
           }
         : undefined,
       app_url_template: appUrl || undefined,
+      logs_command: logsCommand || undefined,
     };
 
     onUpdateRepo(repo.repo_id, {
@@ -339,6 +346,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
     setDownCommand(repo.environment_config?.down_command || '');
     setHealthCheckUrl(repo.environment_config?.health_check?.url_template || '');
     setAppUrl(repo.environment_config?.app_url_template || '');
+    setLogsCommand(repo.environment_config?.logs_command || '');
     setIsEditingTemplate(false);
   };
 
@@ -357,6 +365,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
   const downPreview = renderPreview(downCommand);
   const healthPreview = healthCheckUrl ? renderPreview(healthCheckUrl) : null;
   const appUrlPreview = appUrl ? renderPreview(appUrl) : null;
+  const logsPreview = logsCommand ? renderPreview(logsCommand) : null;
 
   // Get inferred state by combining runtime status + health check
   const inferredState = getEnvironmentState(worktree.environment_instance);
@@ -501,6 +510,20 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
                 >
                   Restart
                 </Button>
+
+                <Button
+                  size="small"
+                  icon={<FileTextOutlined />}
+                  onClick={() => setLogsModalOpen(true)}
+                  disabled={!repo.environment_config?.logs_command}
+                  title={
+                    !repo.environment_config?.logs_command
+                      ? 'Configure a logs command in the template to enable'
+                      : undefined
+                  }
+                >
+                  View Logs
+                </Button>
               </div>
 
               {/* Error State */}
@@ -557,7 +580,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
                   </Typography.Text>
                   <TextArea
                     value={upCommand}
-                    onChange={(e) => setUpCommand(e.target.value)}
+                    onChange={e => setUpCommand(e.target.value)}
                     placeholder="DAEMON_PORT={{add 3000 worktree.unique_id}} UI_PORT={{add 5000 worktree.unique_id}} docker compose -p {{worktree.name}} up -d"
                     rows={3}
                     style={{ fontFamily: 'monospace', fontSize: 11 }}
@@ -581,7 +604,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
                   </Typography.Text>
                   <TextArea
                     value={downCommand}
-                    onChange={(e) => setDownCommand(e.target.value)}
+                    onChange={e => setDownCommand(e.target.value)}
                     placeholder="docker compose -p {{worktree.name}} down"
                     rows={2}
                     style={{ fontFamily: 'monospace', fontSize: 11 }}
@@ -605,7 +628,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
                   </Typography.Text>
                   <Input
                     value={healthCheckUrl}
-                    onChange={(e) => setHealthCheckUrl(e.target.value)}
+                    onChange={e => setHealthCheckUrl(e.target.value)}
                     placeholder="http://localhost:{{add 9000 worktree.unique_id}}/health"
                     style={{ fontFamily: 'monospace', fontSize: 11 }}
                   />
@@ -621,7 +644,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
                   </Typography.Text>
                   <Input
                     value={appUrl}
-                    onChange={(e) => setAppUrl(e.target.value)}
+                    onChange={e => setAppUrl(e.target.value)}
                     placeholder="http://localhost:{{add 5000 worktree.unique_id}}"
                     style={{ fontFamily: 'monospace', fontSize: 11 }}
                   />
@@ -633,6 +656,30 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
                     environment is running.
                   </Typography.Text>
                 </div>
+
+                {/* Logs Command */}
+                <div>
+                  <Typography.Text
+                    strong
+                    style={{ fontSize: 12, display: 'block', marginBottom: 4 }}
+                  >
+                    Logs Command (Optional)
+                  </Typography.Text>
+                  <TextArea
+                    value={logsCommand}
+                    onChange={e => setLogsCommand(e.target.value)}
+                    placeholder="docker compose -p {{worktree.name}} logs --tail=100"
+                    rows={2}
+                    style={{ fontFamily: 'monospace', fontSize: 11 }}
+                  />
+                  <Typography.Text
+                    type="secondary"
+                    style={{ fontSize: 10, display: 'block', marginTop: 4 }}
+                  >
+                    Command to fetch recent logs (non-streaming). Should return quickly with a
+                    snapshot of recent logs.
+                  </Typography.Text>
+                </div>
               </>
             ) : (
               <Space direction="vertical" size={4} style={{ width: '100%' }}>
@@ -640,6 +687,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
                 <TemplateField label="Down Command" value={downCommand} />
                 <TemplateField label="Health Check URL" value={healthCheckUrl} />
                 <TemplateField label="App URL" value={appUrl} />
+                <TemplateField label="Logs Command" value={logsCommand} />
               </Space>
             )}
 
@@ -770,7 +818,7 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
                 <>
                   <TextArea
                     value={customContextJson}
-                    onChange={(e) => setCustomContextJson(e.target.value)}
+                    onChange={e => setCustomContextJson(e.target.value)}
                     placeholder='{\n  "feature_name": "authentication",\n  "extra_port": 3001\n}'
                     rows={6}
                     style={{ fontFamily: 'monospace', fontSize: 11 }}
@@ -814,12 +862,21 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
                   <CommandPreview label="Down" preview={downPreview} />
                   {healthPreview && <CommandPreview label="Health Check" preview={healthPreview} />}
                   {appUrlPreview && <CommandPreview label="App URL" preview={appUrlPreview} />}
+                  {logsPreview && <CommandPreview label="Logs" preview={logsPreview} />}
                 </Space>
               </div>
             )}
           </Space>
         </Card>
       </Space>
+
+      {/* Environment Logs Modal */}
+      <EnvironmentLogsModal
+        open={logsModalOpen}
+        onClose={() => setLogsModalOpen(false)}
+        worktree={worktree}
+        client={client}
+      />
     </div>
   );
 };

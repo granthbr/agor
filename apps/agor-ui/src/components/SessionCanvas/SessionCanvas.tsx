@@ -83,6 +83,7 @@ interface SessionCanvasProps {
   onOpenTerminal?: (commands: string[]) => void;
   onStartEnvironment?: (worktreeId: string) => void;
   onStopEnvironment?: (worktreeId: string) => void;
+  onViewLogs?: (worktreeId: string) => void;
   onOpenCommentsPanel?: () => void;
   onCommentHover?: (commentId: string | null) => void;
   onCommentSelect?: (commentId: string | null) => void;
@@ -145,6 +146,7 @@ interface WorktreeNodeData {
   onOpenTerminal?: (commands: string[]) => void;
   onStartEnvironment?: (worktreeId: string) => void;
   onStopEnvironment?: (worktreeId: string) => void;
+  onViewLogs?: (worktreeId: string) => void;
   onUnpin?: (worktreeId: string) => void;
   compact?: boolean;
   isPinned?: boolean;
@@ -174,6 +176,7 @@ const WorktreeNode = ({ data }: { data: WorktreeNodeData }) => {
         onOpenTerminal={data.onOpenTerminal}
         onStartEnvironment={data.onStartEnvironment}
         onStopEnvironment={data.onStopEnvironment}
+        onViewLogs={data.onViewLogs}
         onUnpin={data.onUnpin}
         isPinned={data.isPinned}
         zoneName={data.zoneName}
@@ -221,6 +224,7 @@ const SessionCanvas = ({
   onOpenTerminal,
   onStartEnvironment,
   onStopEnvironment,
+  onViewLogs,
   onOpenCommentsPanel,
   onCommentHover,
   onCommentSelect,
@@ -442,6 +446,7 @@ const SessionCanvas = ({
           onOpenTerminal,
           onStartEnvironment,
           onStopEnvironment,
+          onViewLogs,
           onUnpin: handleUnpinWorktree,
           compact: false,
           isPinned: !!zoneId,
@@ -471,6 +476,7 @@ const SessionCanvas = ({
     onOpenTerminal,
     onStartEnvironment,
     onStopEnvironment,
+    onViewLogs,
     handleUnpinWorktree,
     zoneLabels,
   ]);

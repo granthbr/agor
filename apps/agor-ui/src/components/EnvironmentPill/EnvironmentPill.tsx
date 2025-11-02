@@ -3,6 +3,7 @@ import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   EditOutlined,
+  FileTextOutlined,
   GlobalOutlined,
   LoadingOutlined,
   PlayCircleOutlined,
@@ -18,6 +19,7 @@ interface EnvironmentPillProps {
   onEdit?: () => void; // Opens WorktreeModal → Environment tab
   onStartEnvironment?: (worktreeId: string) => void;
   onStopEnvironment?: (worktreeId: string) => void;
+  onViewLogs?: (worktreeId: string) => void;
 }
 
 export function EnvironmentPill({
@@ -26,6 +28,7 @@ export function EnvironmentPill({
   onEdit,
   onStartEnvironment,
   onStopEnvironment,
+  onViewLogs,
 }: EnvironmentPillProps) {
   const { token } = theme.useToken();
   const hasConfig = !!repo.environment_config;
@@ -42,7 +45,7 @@ export function EnvironmentPill({
         <Tag
           color="default"
           style={{ cursor: 'pointer', userSelect: 'none', opacity: 0.6 }}
-          onClick={(e) => {
+          onClick={e => {
             e.stopPropagation();
             onEdit?.();
           }}
@@ -169,7 +172,7 @@ export function EnvironmentPill({
               href={environmentUrl}
               target="_blank"
               rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
+              onClick={e => e.stopPropagation()}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -227,7 +230,7 @@ export function EnvironmentPill({
                       <PlayCircleOutlined />
                     )
                   }
-                  onClick={(event) => {
+                  onClick={event => {
                     event.stopPropagation();
                     if (!startDisabled) {
                       onStartEnvironment(worktree.worktree_id);
@@ -259,13 +262,41 @@ export function EnvironmentPill({
                   icon={
                     isProcessing && status === 'stopping' ? <LoadingOutlined /> : <StopOutlined />
                   }
-                  onClick={(event) => {
+                  onClick={event => {
                     event.stopPropagation();
                     if (!stopDisabled) {
                       onStopEnvironment(worktree.worktree_id);
                     }
                   }}
                   disabled={stopDisabled}
+                  style={{
+                    height: 22,
+                    width: 22,
+                    minWidth: 22,
+                    padding: 0,
+                  }}
+                />
+              </Tooltip>
+            )}
+            {onViewLogs && (
+              <Tooltip
+                title={
+                  !repo.environment_config?.logs_command
+                    ? 'Configure logs command to enable'
+                    : 'View environment logs'
+                }
+              >
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<FileTextOutlined />}
+                  onClick={event => {
+                    event.stopPropagation();
+                    if (repo.environment_config?.logs_command) {
+                      onViewLogs(worktree.worktree_id);
+                    }
+                  }}
+                  disabled={!repo.environment_config?.logs_command}
                   style={{
                     height: 22,
                     width: 22,

@@ -99,6 +99,7 @@ interface SessionDrawerProps {
   onDelete?: (sessionId: string) => void;
   onStartEnvironment?: (worktreeId: string) => void;
   onStopEnvironment?: (worktreeId: string) => void;
+  onViewLogs?: (worktreeId: string) => void;
 }
 
 const SessionDrawer = ({
@@ -124,6 +125,7 @@ const SessionDrawer = ({
   onDelete,
   onStartEnvironment,
   onStopEnvironment,
+  onViewLogs,
 }: SessionDrawerProps) => {
   const { token } = theme.useToken();
   const { modal } = App.useApp();
@@ -514,6 +516,7 @@ const SessionDrawer = ({
                 }
                 onStartEnvironment={onStartEnvironment}
                 onStopEnvironment={onStopEnvironment}
+                onViewLogs={onViewLogs}
               />
             )}
             {/* MCP Servers */}
