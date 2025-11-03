@@ -24,7 +24,7 @@ import {
   type ResumedSessionData,
 } from '@google/gemini-cli-core';
 import type { Content, Part } from '@google/genai';
-import { resolveApiKey, resolveUserEnvironment } from '../../config';
+import { getDaemonUrl, resolveApiKey, resolveUserEnvironment } from '../../config';
 import type { Database } from '../../db/client';
 import type { MCPServerRepository } from '../../db/repositories/mcp-servers';
 import type { MessagesRepository } from '../../db/repositories/messages';
@@ -594,8 +594,8 @@ export class GeminiPromptService {
       );
 
       if (mcpToken) {
-        // Get daemon URL from config (default: http://localhost:3030)
-        const daemonUrl = process.env.VITE_DAEMON_URL || 'http://localhost:3030';
+        // Get daemon URL from config (supports Codespaces auto-detection)
+        const daemonUrl = await getDaemonUrl();
 
         console.log(`🔌 Configuring Agor MCP server (self-access to daemon)`);
         // Use httpUrl parameter for HTTP transport

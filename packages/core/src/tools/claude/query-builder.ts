@@ -9,7 +9,7 @@ import { execSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { PermissionMode } from '@anthropic-ai/claude-agent-sdk/sdk';
-import { resolveApiKey, resolveUserEnvironment } from '../../config';
+import { getDaemonUrl, resolveApiKey, resolveUserEnvironment } from '../../config';
 import type { Database } from '../../db/client';
 import type { MCPServerRepository } from '../../db/repositories/mcp-servers';
 import type { MessagesRepository } from '../../db/repositories/messages';
@@ -392,8 +392,8 @@ export async function setupQuery(
     );
 
     if (mcpToken) {
-      // Get daemon URL from config (default: http://localhost:3030)
-      const daemonUrl = process.env.VITE_DAEMON_URL || 'http://localhost:3030';
+      // Get daemon URL from config (supports Codespaces auto-detection)
+      const daemonUrl = await getDaemonUrl();
 
       console.log(`🔌 Configuring Agor MCP server (self-access to daemon)`);
       const mcpConfig = {
