@@ -68,14 +68,14 @@ See the [Getting Started Guide](/guide/getting-started) for detailed instruction
 
 - Define **zones** on your board that trigger templated prompts when sessions are dropped.
 - Build **kanban-style flows** or custom pipelines: analyze → develop → review → deploy.
-- Templated prompts -> "deeply analyze this github issue: {{ worktree.issue_url }}"
+- Templated prompts: Use variables like `worktree.issue_url` in your prompts
 
 ### 🌳 Shared, Persisted Dev Environments
 
 - **No more local environment juggling** — managed **git worktrees** with shared, persistent dev environments.
 - Sessions map to worktrees with running apps, auto-managed ports, and health monitoring.
 - **One-click control** — configure start/stop commands once, everyone on the team can use it.
-- Powered by templated commands such as `PORT={{ add 9000 worktree.unique_id  }} docker compose -p {{ worktree.name}} up -d` to avoid conflicts while parallelizing things
+- Powered by templated commands (e.g. `PORT` assignment with worktree variables) to avoid conflicts while parallelizing things
 
 ### 🕹️ Real-Time Strategy for AI Teams
 
