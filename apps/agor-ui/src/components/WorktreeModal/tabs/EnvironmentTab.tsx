@@ -771,7 +771,14 @@ export const EnvironmentTab: React.FC<EnvironmentTabProps> = ({
                   <Typography.Text code>{worktree.name}</Typography.Text>
                 </Descriptions.Item>
                 <Descriptions.Item label="worktree.path">
-                  <Typography.Text code style={{ fontSize: 10 }}>
+                  <Typography.Text
+                    code
+                    style={{ fontSize: 10 }}
+                    copyable={{
+                      text: worktree.path,
+                      tooltips: ['Copy path', 'Copied!'],
+                    }}
+                  >
                     {worktree.path}
                   </Typography.Text>
                 </Descriptions.Item>

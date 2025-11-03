@@ -118,7 +118,14 @@ export const GeneralTab: React.FC<GeneralTabProps> = ({
             </Descriptions.Item>
           )}
           <Descriptions.Item label="Path">
-            <Typography.Text code style={{ fontSize: 11 }}>
+            <Typography.Text
+              code
+              style={{ fontSize: 11 }}
+              copyable={{
+                text: worktree.path,
+                tooltips: ['Copy path', 'Copied!'],
+              }}
+            >
               {worktree.path}
             </Typography.Text>
           </Descriptions.Item>
