@@ -6,7 +6,7 @@ import { isDaemonRunning } from '@agor/core/api';
 import { getDaemonUrl } from '@agor/core/config';
 import { Command } from '@oclif/core';
 import chalk from 'chalk';
-import { isInstalledPackage } from '../../lib/context.js';
+import { isAgorInitialized, isInstalledPackage } from '../../lib/context.js';
 import { getDaemonPid, getLogFilePath, getPidFilePath } from '../../lib/daemon-manager.js';
 
 export default class DaemonStatus extends Command {
@@ -15,17 +15,22 @@ export default class DaemonStatus extends Command {
   static examples = ['<%= config.bin %> <%= command.id %>'];
 
   async run(): Promise<void> {
+    // Check if Agor is initialized
+    const initialized = await isAgorInitialized();
+
     // Get daemon info
     const daemonUrl = await getDaemonUrl();
     const pid = getDaemonPid();
-    const running = await isDaemonRunning(daemonUrl);
+    const running = initialized ? await isDaemonRunning(daemonUrl) : false;
 
     this.log(chalk.bold('\nDaemon Status'));
     this.log(chalk.dim('─'.repeat(50)));
     this.log('');
 
     // Status
-    if (running) {
+    if (!initialized) {
+      this.log(`  Status: ${chalk.yellow('Not Initialized ⚠')}`);
+    } else if (running) {
       this.log(`  Status: ${chalk.green('Running ✓')}`);
     } else {
       this.log(`  Status: ${chalk.red('Not Running ✗')}`);
@@ -55,7 +60,11 @@ export default class DaemonStatus extends Command {
     this.log('');
 
     // Instructions
-    if (!running) {
+    if (!initialized) {
+      this.log(chalk.bold('To initialize Agor:'));
+      this.log(`  ${chalk.cyan('agor init')}`);
+      this.log('');
+    } else if (!running) {
       if (isInstalledPackage()) {
         this.log(chalk.bold('To start the daemon:'));
         this.log(`  ${chalk.cyan('agor daemon start')}`);
