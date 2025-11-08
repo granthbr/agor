@@ -38,6 +38,7 @@ import {
 import React from 'react';
 import { useTasks } from '../../hooks/useTasks';
 import spawnSubsessionTemplate from '../../templates/spawn_subsession.hbs?raw';
+import { getContextWindowGradient } from '../../utils/contextWindow';
 import { compileTemplate } from '../../utils/templates';
 import { AutocompleteTextarea } from '../AutocompleteTextarea';
 import { ConversationView } from '../ConversationView';
@@ -209,10 +210,17 @@ const SessionDrawer = ({
       return {
         used: tasksWithContext[0].context_window!,
         limit: tasksWithContext[0].context_window_limit!,
+        modelUsage: tasksWithContext[0].model_usage,
       };
     }
     return null;
   }, [tasks]);
+
+  // Calculate gradient for footer background
+  const footerGradient = React.useMemo(() => {
+    if (!latestContextWindow) return undefined;
+    return getContextWindowGradient(latestContextWindow.used, latestContextWindow.limit);
+  }, [latestContextWindow]);
 
   const footerTimerTask = React.useMemo(() => {
     if (tasks.length === 0) {
@@ -616,7 +624,7 @@ const SessionDrawer = ({
         style={{
           position: 'sticky',
           bottom: 0,
-          background: token.colorBgContainer,
+          background: footerGradient || token.colorBgContainer,
           borderTop: `1px solid ${token.colorBorder}`,
           padding: `${token.sizeUnit * 2}px ${token.sizeUnit * 6}px`,
           marginLeft: -token.sizeUnit * 6,
@@ -683,6 +691,7 @@ const SessionDrawer = ({
                 <ContextWindowPill
                   used={latestContextWindow.used}
                   limit={latestContextWindow.limit}
+                  modelUsage={latestContextWindow.modelUsage}
                 />
               )}
             </Space>
