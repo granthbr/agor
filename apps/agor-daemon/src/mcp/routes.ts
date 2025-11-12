@@ -875,8 +875,7 @@ export function setupMCPRoutes(app: Application): void {
           ).spawn(context.sessionId, spawnData, baseServiceParams);
           console.log(`✅ Subsession created: ${childSession.session_id.substring(0, 8)}`);
 
-          // Trigger prompt execution by directly calling the prompt service endpoint
-          // This ensures events are broadcast properly via WebSockets
+          // Trigger child execution (spawns start fresh by default - see query-builder.ts)
           console.log(
             `🚀 Triggering prompt execution for subsession ${childSession.session_id.substring(0, 8)}`
           );
@@ -1105,7 +1104,7 @@ export function setupMCPRoutes(app: Application): void {
               .service('sessions')
               .get(childSession.session_id, baseServiceParams);
 
-            // Trigger prompt execution
+            // Trigger prompt execution (spawns start fresh by default - see query-builder.ts)
             console.log(`🚀 Triggering prompt execution for subsession`);
             const promptResponse = await app.service('/sessions/:id/prompt').create(
               {

@@ -192,10 +192,11 @@ export class SessionsService extends DrizzleService<Session, Partial<Session>, S
       params
     );
 
+    // Cast spawnedSession to Session to handle return type (create returns Session | Session[])
+    const session = spawnedSession as Session;
+
     // Update parent's children list
     const parentChildren = parent.genealogy?.children || [];
-    // Cast spawnedSession to Session to handle return type
-    const session = spawnedSession as Session;
     await this.patch(
       id,
       {
