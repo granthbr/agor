@@ -19,10 +19,17 @@ import {
   type MessageID,
   MessageRole,
   type PermissionMode,
+  type Session,
   type SessionID,
   type TaskID,
 } from '../../types';
 import type { TokenUsage } from '../../utils/pricing';
+import { calculateTokenCost } from '../../utils/pricing';
+import type {
+  CodexSdkResponse,
+  NormalizedSdkResponse,
+  RawSdkResponse,
+} from '../../types/sdk-response';
 import type { ITool, StreamingCallbacks, ToolCapabilities } from '../base';
 import type { MessagesService, TasksService } from '../claude/claude-tool';
 import { DEFAULT_CODEX_MODEL, getCodexContextWindowLimit } from './models';
@@ -35,11 +42,6 @@ interface CodexExecutionResult {
   contextWindow?: number;
   contextWindowLimit?: number;
   model?: string;
-}
-
-function calculateCodexContextWindow(usage?: TokenUsage): number | undefined {
-  if (!usage) return undefined;
-  return (usage.input_tokens || 0) + (usage.cache_read_tokens || 0);
 }
 
 export class CodexTool implements ITool {
@@ -142,8 +144,6 @@ export class CodexTool implements ITool {
     let resolvedModel: string | undefined;
     let currentMessageId: MessageID | null = null;
     let tokenUsage: TokenUsage | undefined;
-    let contextWindow: number | undefined;
-    let contextWindowLimit: number | undefined;
     let _streamStartTime = Date.now();
     let _firstTokenTime: number | null = null;
 
@@ -164,10 +164,6 @@ export class CodexTool implements ITool {
 
       if (event.type === 'complete' && event.usage) {
         tokenUsage = event.usage;
-        contextWindow = calculateCodexContextWindow(event.usage);
-        if (!contextWindowLimit) {
-          contextWindowLimit = getCodexContextWindowLimit(resolvedModel || DEFAULT_CODEX_MODEL);
-        }
       }
 
       // Capture Codex thread ID
@@ -292,19 +288,13 @@ export class CodexTool implements ITool {
       }
     }
 
-    if (!contextWindow && tokenUsage) {
-      contextWindow = calculateCodexContextWindow(tokenUsage);
-    }
-    if (!contextWindowLimit) {
-      contextWindowLimit = getCodexContextWindowLimit(resolvedModel || DEFAULT_CODEX_MODEL);
-    }
-
     return {
       userMessageId: userMessage.message_id,
       assistantMessageIds,
       tokenUsage,
-      contextWindow,
-      contextWindowLimit,
+      // Codex SDK doesn't provide contextWindow/contextWindowLimit
+      contextWindow: undefined,
+      contextWindowLimit: undefined,
       model: resolvedModel || DEFAULT_CODEX_MODEL,
     };
   }
@@ -460,10 +450,6 @@ export class CodexTool implements ITool {
 
       if (event.type === 'complete' && event.usage) {
         tokenUsage = event.usage;
-        contextWindow = calculateCodexContextWindow(event.usage);
-        if (!contextWindowLimit) {
-          contextWindowLimit = getCodexContextWindowLimit(resolvedModel || DEFAULT_CODEX_MODEL);
-        }
       }
 
       // Capture Codex thread ID
@@ -499,19 +485,13 @@ export class CodexTool implements ITool {
       }
     }
 
-    if (!contextWindow && tokenUsage) {
-      contextWindow = calculateCodexContextWindow(tokenUsage);
-    }
-    if (!contextWindowLimit) {
-      contextWindowLimit = getCodexContextWindowLimit(resolvedModel || DEFAULT_CODEX_MODEL);
-    }
-
     return {
       userMessageId: userMessage.message_id,
       assistantMessageIds,
       tokenUsage,
-      contextWindow,
-      contextWindowLimit,
+      // Codex SDK doesn't provide contextWindow/contextWindowLimit
+      contextWindow: undefined,
+      contextWindowLimit: undefined,
       model: resolvedModel || DEFAULT_CODEX_MODEL,
     };
   }
@@ -554,4 +534,45 @@ export class CodexTool implements ITool {
 
     return result;
   }
+
+  // ============================================================
+  // Token Accounting (NEW)
+  // ============================================================
+
+  /**
+   * Normalize Codex SDK response to common format
+   *
+   * Codex doesn't support caching, so cache tokens are always 0.
+   */
+  normalizedSdkResponse(rawResponse: RawSdkResponse): NormalizedSdkResponse {
+    if (rawResponse.tool !== 'codex') {
+      throw new Error(`Expected codex response, got ${rawResponse.tool}`);
+    }
+
+    const codexResponse = rawResponse as CodexSdkResponse;
+
+    // Extract token usage with defaults
+    const tokenUsage = codexResponse.tokenUsage || {
+      input_tokens: 0,
+      output_tokens: 0,
+      total_tokens: 0,
+    };
+
+    return {
+      userMessageId: codexResponse.userMessageId,
+      assistantMessageIds: codexResponse.assistantMessageIds,
+      tokenUsage: {
+        inputTokens: tokenUsage.input_tokens || 0,
+        outputTokens: tokenUsage.output_tokens || 0,
+        totalTokens: tokenUsage.total_tokens || tokenUsage.input_tokens! + tokenUsage.output_tokens! || 0,
+        cacheReadTokens: 0, // Codex doesn't support caching
+        cacheCreationTokens: 0, // Codex doesn't support caching
+      },
+      contextWindow: codexResponse.contextWindow,
+      contextWindowLimit: codexResponse.contextWindowLimit,
+      model: codexResponse.model,
+      durationMs: codexResponse.durationMs,
+    };
+  }
+
 }

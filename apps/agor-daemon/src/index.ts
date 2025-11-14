@@ -100,10 +100,8 @@ import type {
 } from '@agor/core/types';
 import { SessionStatus, TaskStatus } from '@agor/core/types';
 import {
-  calculateContextWindowUsage,
   getContextWindowLimit,
   getSessionContextUsage,
-  normalizeTokenUsage,
 } from '@agor/core/utils/context-window';
 import { NotFoundError } from '@agor/core/utils/errors';
 import type { TokenUsage } from '@agor/core/utils/pricing';
@@ -117,98 +115,6 @@ import { validateQuery } from '@feathersjs/schema';
  */
 function isPaginated<T>(result: T[] | Paginated<T>): result is Paginated<T> {
   return !Array.isArray(result) && 'data' in result && 'total' in result;
-}
-
-/**
- * Calculate context window for a completed task using incremental approach
- *
- * Simple algorithm:
- * A) First task: cache_read + cache_creation + (input + output)
- * B) Other tasks: previous_task.context_window + (input + output)
- * C) First task after compaction: cache_creation + (input + output)
- *
- * @param session - Current session
- * @param currentTaskUsage - Token usage from the task being completed
- * @param currentTaskId - ID of the task being completed
- * @param tasksService - Tasks service for querying previous task
- * @param messagesService - Messages service for detecting compaction events
- * @returns Context window usage in tokens, or undefined if calculation fails
- */
-async function calculateTaskContextWindow(
-  session: Session,
-  currentTaskUsage: TokenUsage | undefined,
-  currentTaskId: string,
-  tasksService: TasksServiceImpl,
-  messagesService: MessagesServiceImpl
-): Promise<number | undefined> {
-  try {
-    if (!currentTaskUsage) {
-      return undefined;
-    }
-
-    // Normalize current task tokens (handles Codex vs Claude differences)
-    const normalized = normalizeTokenUsage(currentTaskUsage, session.agentic_tool);
-    const currentTaskTokens = normalized
-      ? (normalized.input_tokens || 0) + (normalized.output_tokens || 0)
-      : 0;
-
-    // Check if there's a compaction event for the current task
-    const allMessagesResult = (await messagesService.find({
-      query: { session_id: session.session_id, task_id: currentTaskId, $limit: 100 },
-    })) as Message[] | Paginated<Message>;
-    const taskMessages: Message[] = isPaginated(allMessagesResult)
-      ? allMessagesResult.data
-      : allMessagesResult;
-
-    // Helper to check if a message contains a compaction event
-    const isCompactionMessage = (msg: Message): boolean => {
-      if (msg.type !== 'system' || typeof msg.content !== 'object' || msg.content === null) {
-        return false;
-      }
-
-      // Handle array content (list of blocks)
-      if (Array.isArray(msg.content)) {
-        return msg.content.some(
-          (block: { type?: string; status?: string }) =>
-            block.type === 'system_status' && block.status === 'compacting'
-        );
-      }
-
-      // Handle object content (single block)
-      return (msg.content as { status?: string }).status === 'compacting';
-    };
-
-    const hasCompaction = taskMessages.some(isCompactionMessage);
-
-    // A) First task in session
-    if (session.tasks.length === 0) {
-      return (
-        (currentTaskUsage.cache_read_tokens || 0) +
-        (currentTaskUsage.cache_creation_tokens || 0) +
-        currentTaskTokens
-      );
-    }
-
-    // Get previous task
-    const previousTaskId = session.tasks[session.tasks.length - 1];
-    const previousTask = await tasksService.get(previousTaskId);
-
-    // C) First task after compaction (reset to just cache_creation + current)
-    if (hasCompaction) {
-      return (currentTaskUsage.cache_creation_tokens || 0) + currentTaskTokens;
-    }
-
-    // B) Regular task: previous context + current tokens
-    const previousContextWindow = previousTask.context_window || 0;
-    return previousContextWindow + currentTaskTokens;
-  } catch (err) {
-    console.warn(
-      `⚠️  Failed to calculate cumulative context window for session ${session.session_id}:`,
-      err
-    );
-    // Fallback to simple calculation (current task only)
-    return calculateContextWindowUsage(currentTaskUsage);
-  }
 }
 
 import compression from 'compression';
@@ -1868,23 +1774,6 @@ async function main() {
         }
       }
 
-      // Get previous task's context window for initial UI display
-      // This gives users an immediate sense of context size before the task completes
-      let initialContextWindow: number | undefined;
-      let initialContextWindowLimit: number | undefined;
-      if (session.tasks.length > 0) {
-        try {
-          // Get the most recent task
-          const previousTaskId = session.tasks[session.tasks.length - 1];
-          const previousTask = await tasksService.get(previousTaskId, params);
-          initialContextWindow = previousTask.context_window;
-          initialContextWindowLimit = previousTask.context_window_limit;
-        } catch (error) {
-          console.debug('Could not get previous task context window:', error);
-          // Not critical - just won't show initial estimate
-        }
-      }
-
       // PHASE 1: Create task immediately with 'running' status (UI shows task instantly)
       const task = await tasksService.create(
         {
@@ -1904,9 +1793,6 @@ async function main() {
             ref_at_start: refAtStart, // Now always a string (never undefined)
             sha_at_start: gitStateAtStart,
           },
-          // Set initial context window from previous task (will be updated on completion)
-          context_window: initialContextWindow,
-          context_window_limit: initialContextWindowLimit,
         },
         params
       );
@@ -2125,25 +2011,15 @@ async function main() {
                 );
               } else {
                 // Safe to mark as completed
-                // Calculate estimated cost if usage data is available
-                let usage: typeof task.usage | undefined;
-                if ('tokenUsage' in result && result.tokenUsage) {
-                  const tokenUsage = result.tokenUsage as TokenUsage;
-                  const { calculateTokenCost } = await import('@agor/core/utils/pricing');
-                  const estimatedCost = calculateTokenCost(tokenUsage, session.agentic_tool);
 
-                  // Calculate total_tokens if SDK didn't provide it
-                  const totalTokens =
-                    tokenUsage.total_tokens ||
-                    (tokenUsage.input_tokens || 0) + (tokenUsage.output_tokens || 0);
-
-                  // Spread tokenUsage (type-safe) and add calculated fields
-                  usage = {
-                    ...tokenUsage,
-                    total_tokens: totalTokens,
-                    estimated_cost_usd: estimatedCost,
-                  };
-                }
+                // Store raw SDK response - single source of truth for token accounting
+                const rawSdkResponse: import('@agor/core/types').RawSdkResponse | undefined =
+                  result
+                    ? {
+                        tool: session.agentic_tool,
+                        ...result,
+                      } as import('@agor/core/types').RawSdkResponse
+                    : undefined;
 
                 // Calculate tool_use_count from all messages in this task
                 let toolUseCount = 0;
@@ -2166,16 +2042,6 @@ async function main() {
                   // Continue with toolUseCount = 0
                 }
 
-                // Calculate cumulative context window including current task's tokens
-                // Uses simple incremental approach: previous.context_window + current tokens
-                const contextWindow = await calculateTaskContextWindow(
-                  session,
-                  usage,
-                  task.task_id,
-                  tasksService,
-                  messagesService
-                );
-
                 const updated = await safePatch(
                   tasksService,
                   task.task_id,
@@ -2188,7 +2054,6 @@ async function main() {
                       end_timestamp: endTimestamp,
                     },
                     tool_use_count: toolUseCount,
-                    usage,
                     // Save execution metadata from result
                     duration_ms:
                       'durationMs' in result
@@ -2198,16 +2063,10 @@ async function main() {
                       'agentSessionId' in result
                         ? (result.agentSessionId as string | undefined)
                         : undefined,
-                    context_window: contextWindow,
-                    context_window_limit:
-                      'contextWindowLimit' in result
-                        ? (result.contextWindowLimit as number | undefined)
-                        : undefined,
                     model: 'model' in result ? (result.model as string | undefined) : undefined,
-                    model_usage:
-                      'modelUsage' in result
-                        ? (result.modelUsage as Task['model_usage'])
-                        : undefined,
+
+                    // Store raw SDK response - single source of truth
+                    raw_sdk_response: rawSdkResponse,
                   },
                   'Task'
                 );
