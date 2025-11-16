@@ -2089,23 +2089,13 @@ async function main() {
                         if (!rawSdkResponse) return undefined;
 
                         if (session.agentic_tool === 'claude-code') {
-                          // Claude Code: sum previous tasks + current task
-                          const previousTasksTotal =
+                          // Claude Code: computeContextWindow handles everything (previous + current)
+                          const total =
                             (await claudeTool.computeContextWindow?.(
                               session.session_id,
                               task.task_id,
                               rawSdkResponse
                             )) || 0;
-                          const normalized = normalizeRawSdkResponse(
-                            rawSdkResponse,
-                            session.agentic_tool
-                          );
-                          const currentTaskTokens =
-                            normalized.tokenUsage.inputTokens + normalized.tokenUsage.outputTokens;
-                          const total = previousTasksTotal + currentTaskTokens;
-                          console.log(
-                            `📊 Context window (claude-code): previous=${previousTasksTotal}, current=${currentTaskTokens}, total=${total}`
-                          );
                           return total;
                         }
 
