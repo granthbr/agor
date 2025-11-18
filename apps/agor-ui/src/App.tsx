@@ -627,6 +627,25 @@ function AppContent() {
     }
   };
 
+  const handleCreateLocalRepo = async (data: { path: string; slug?: string }) => {
+    if (!client) return;
+    try {
+      showLoading('Adding local repository...', { key: 'add-local-repo' });
+
+      await client.service('repos/local').create({
+        path: data.path,
+        slug: data.slug,
+      });
+
+      showSuccess('Local repository added successfully!', { key: 'add-local-repo' });
+    } catch (error) {
+      showError(
+        `Failed to add local repository: ${error instanceof Error ? error.message : String(error)}`,
+        { key: 'add-local-repo' }
+      );
+    }
+  };
+
   const handleUpdateRepo = async (repoId: string, updates: Partial<Repo>) => {
     if (!client) return;
     try {
@@ -1063,6 +1082,7 @@ function AppContent() {
                 onUpdateBoard={handleUpdateBoard}
                 onDeleteBoard={handleDeleteBoard}
                 onCreateRepo={handleCreateRepo}
+                onCreateLocalRepo={handleCreateLocalRepo}
                 onUpdateRepo={handleUpdateRepo}
                 onDeleteRepo={handleDeleteRepo}
                 onArchiveOrDeleteWorktree={handleArchiveOrDeleteWorktree}

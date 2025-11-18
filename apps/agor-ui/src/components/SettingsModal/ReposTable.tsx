@@ -1,6 +1,19 @@
 import type { Repo } from '@agor/core/types';
 import { DeleteOutlined, EditOutlined, FolderOutlined, PlusOutlined } from '@ant-design/icons';
-import { Button, Card, Empty, Form, Input, Modal, Popconfirm, Space, Tag, Typography } from 'antd';
+import type { RadioChangeEvent } from 'antd';
+import {
+  Button,
+  Card,
+  Empty,
+  Form,
+  Input,
+  Modal,
+  Popconfirm,
+  Radio,
+  Space,
+  Tag,
+  Typography,
+} from 'antd';
 import { useState } from 'react';
 
 // Using Typography.Text directly to avoid DOM Text interface collision
@@ -37,19 +50,49 @@ function extractSlugFromUrl(url: string): string {
   }
 }
 
+// Utility: Create a best-effort slug from a local path (local/<dirname>)
+function extractSlugFromPath(path: string): string {
+  if (!path) return '';
+
+  const normalized = path.replace(/\\/g, '/');
+  const segments = normalized.split('/').filter(Boolean);
+  const lastSegment = segments[segments.length - 1] || '';
+
+  if (!lastSegment) return '';
+
+  const sanitized = lastSegment
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  if (!sanitized) return '';
+
+  return `local/${sanitized}`;
+}
+
 interface ReposTableProps {
   repos: Repo[];
   onCreate?: (data: { url: string; slug: string; default_branch: string }) => void;
+  onCreateLocal?: (data: { path: string; slug?: string }) => void;
   onUpdate?: (repoId: string, updates: Partial<Repo>) => void;
   onDelete?: (repoId: string) => void;
 }
 
-export const ReposTable: React.FC<ReposTableProps> = ({ repos, onCreate, onUpdate, onDelete }) => {
+export const ReposTable: React.FC<ReposTableProps> = ({
+  repos,
+  onCreate,
+  onCreateLocal,
+  onUpdate,
+  onDelete,
+}) => {
   const [repoModalOpen, setRepoModalOpen] = useState(false);
   const [editingRepo, setEditingRepo] = useState<Repo | null>(null);
+  const [repoMode, setRepoMode] = useState<'remote' | 'local'>('remote');
   const [repoForm] = Form.useForm();
 
   const isEditing = !!editingRepo;
+  const isLocalMode = repoMode === 'local';
 
   // Auto-extract slug when URL changes in repo form
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -62,12 +105,23 @@ export const ReposTable: React.FC<ReposTableProps> = ({ repos, onCreate, onUpdat
     }
   };
 
+  const handlePathChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const path = e.target.value;
+    if (path) {
+      const slug = extractSlugFromPath(path);
+      if (slug) {
+        repoForm.setFieldsValue({ slug });
+      }
+    }
+  };
+
   const handleDeleteRepo = (repoId: string) => {
     onDelete?.(repoId);
   };
 
   const handleOpenCreateModal = () => {
     setEditingRepo(null);
+    setRepoMode('remote');
     repoForm.resetFields();
     // Set default values for new repo
     repoForm.setFieldsValue({
@@ -78,6 +132,7 @@ export const ReposTable: React.FC<ReposTableProps> = ({ repos, onCreate, onUpdat
 
   const handleOpenEditModal = (repo: Repo) => {
     setEditingRepo(repo);
+    setRepoMode(repo.repo_type ?? 'remote');
     repoForm.setFieldsValue({
       slug: repo.slug,
       default_branch: repo.default_branch || 'main',
@@ -89,17 +144,26 @@ export const ReposTable: React.FC<ReposTableProps> = ({ repos, onCreate, onUpdat
     repoForm.validateFields().then((values) => {
       if (isEditing && editingRepo) {
         // Update existing repo
-        onUpdate?.(editingRepo.repo_id, {
+        const updates: Partial<Repo> = {
           slug: values.slug,
-          default_branch: values.default_branch,
-        });
+        };
+        if (values.default_branch) {
+          updates.default_branch = values.default_branch;
+        }
+        onUpdate?.(editingRepo.repo_id, updates);
       } else {
-        // Create new repo - close modal immediately, don't wait for clone
-        onCreate?.({
-          url: values.url,
-          slug: values.slug,
-          default_branch: values.default_branch,
-        });
+        if (repoMode === 'local') {
+          onCreateLocal?.({
+            path: values.path,
+            slug: values.slug || undefined,
+          });
+        } else {
+          onCreate?.({
+            url: values.url,
+            slug: values.slug,
+            default_branch: values.default_branch,
+          });
+        }
       }
       repoForm.resetFields();
       setEditingRepo(null);
@@ -110,8 +174,32 @@ export const ReposTable: React.FC<ReposTableProps> = ({ repos, onCreate, onUpdat
   const handleCancelModal = () => {
     repoForm.resetFields();
     setEditingRepo(null);
+    setRepoMode('remote');
     setRepoModalOpen(false);
   };
+
+  const handleModeChange = (e: RadioChangeEvent) => {
+    const value = e.target.value as 'remote' | 'local';
+    setRepoMode(value);
+    repoForm.resetFields();
+    repoForm.setFieldsValue({
+      url: undefined,
+      path: undefined,
+      slug: undefined,
+      default_branch: value === 'remote' ? 'main' : undefined,
+    });
+  };
+
+  const slugHelperText = isLocalMode
+    ? 'Provide org/repo format (e.g., local/myapp). Agor will try to infer from git remotes if available.'
+    : 'Auto-detected from URL (editable). Format: org/repo (dots allowed)';
+
+  const modalTitle = isEditing
+    ? 'Edit Repository'
+    : isLocalMode
+      ? 'Add Local Repository'
+      : 'Clone Repository';
+  const modalOkText = isEditing ? 'Save' : isLocalMode ? 'Add' : 'Clone';
 
   return (
     <div>
@@ -124,7 +212,7 @@ export const ReposTable: React.FC<ReposTableProps> = ({ repos, onCreate, onUpdat
         }}
       >
         <Typography.Text type="secondary">
-          Clone and manage git repositories for your sessions.
+          Connect remote or local git repositories for your sessions.
         </Typography.Text>
         <Button type="primary" icon={<PlusOutlined />} onClick={handleOpenCreateModal}>
           New Repository
@@ -142,7 +230,9 @@ export const ReposTable: React.FC<ReposTableProps> = ({ repos, onCreate, onUpdat
         >
           <Empty description="No repositories yet">
             <Typography.Text type="secondary">
-              Click "New Repository" to clone a git repository.
+              Click "New Repository" to clone a remote repo or switch to "Local" mode to link an
+              existing clone. You can also run <code>agor repo add-local &lt;path&gt;</code> from
+              the CLI.
             </Typography.Text>
           </Empty>
         </div>
@@ -150,95 +240,127 @@ export const ReposTable: React.FC<ReposTableProps> = ({ repos, onCreate, onUpdat
 
       {repos.length > 0 && (
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
-          {repos.map((repo) => (
-            <Card
-              key={repo.repo_id}
-              size="small"
-              title={
-                <Space>
-                  <FolderOutlined />
-                  <Typography.Text strong>{repo.name}</Typography.Text>
-                  <Tag color="blue" style={{ marginLeft: 8 }}>
-                    Managed
-                  </Tag>
-                </Space>
-              }
-              extra={
-                <Space>
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<EditOutlined />}
-                    onClick={() => handleOpenEditModal(repo)}
-                  />
-                  <Popconfirm
-                    title="Delete repository?"
-                    description={
-                      <>
-                        <p>Are you sure you want to delete "{repo.name}"?</p>
-                        <p style={{ color: '#ff4d4f' }}>
-                          ⚠️ This will delete the local repository and all associated worktrees.
-                        </p>
-                      </>
-                    }
-                    onConfirm={() => handleDeleteRepo(repo.repo_id)}
-                    okText="Delete"
-                    cancelText="Cancel"
-                    okButtonProps={{ danger: true }}
-                  >
-                    <Button type="text" size="small" icon={<DeleteOutlined />} danger />
-                  </Popconfirm>
-                </Space>
-              }
-            >
-              {/* Repo metadata */}
-              <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                <div>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    Slug:{' '}
-                  </Typography.Text>
-                  <Typography.Text code style={{ fontSize: 12 }}>
-                    {repo.slug}
-                  </Typography.Text>
-                </div>
+          {repos.map((repo) => {
+            const isLocal = repo.repo_type === 'local';
+            const tagColor = isLocal ? 'green' : 'blue';
+            const tagLabel = isLocal ? 'Local' : 'Remote';
 
-                {repo.remote_url && (
+            return (
+              <Card
+                key={repo.repo_id}
+                size="small"
+                title={
+                  <Space>
+                    <FolderOutlined />
+                    <Typography.Text strong>{repo.name}</Typography.Text>
+                    <Tag color={tagColor} style={{ marginLeft: 8 }}>
+                      {tagLabel}
+                    </Tag>
+                  </Space>
+                }
+                extra={
+                  <Space>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<EditOutlined />}
+                      onClick={() => handleOpenEditModal(repo)}
+                    />
+                    <Popconfirm
+                      title="Delete repository?"
+                      description={
+                        <>
+                          <p>Are you sure you want to delete "{repo.name}"?</p>
+                          {isLocal ? (
+                            <p style={{ color: '#ff4d4f' }}>
+                              ⚠️ This removes the repository from Agor. Your local files at{' '}
+                              <code>{repo.local_path}</code> will remain untouched.
+                            </p>
+                          ) : (
+                            <p style={{ color: '#ff4d4f' }}>
+                              ⚠️ This will delete the Agor-managed clone and associated worktrees.
+                            </p>
+                          )}
+                        </>
+                      }
+                      onConfirm={() => handleDeleteRepo(repo.repo_id)}
+                      okText="Delete"
+                      cancelText="Cancel"
+                      okButtonProps={{ danger: true }}
+                    >
+                      <Button type="text" size="small" icon={<DeleteOutlined />} danger />
+                    </Popconfirm>
+                  </Space>
+                }
+              >
+                {/* Repo metadata */}
+                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  <div>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Slug:{' '}
+                    </Typography.Text>
+                    <Typography.Text code style={{ fontSize: 12 }}>
+                      {repo.slug}
+                    </Typography.Text>
+                  </div>
+
+                  <div>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Type:{' '}
+                    </Typography.Text>
+                    <Typography.Text code style={{ fontSize: 11 }}>
+                      {tagLabel.toLowerCase()}
+                    </Typography.Text>
+                  </div>
+
                   <div>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                       Remote:{' '}
                     </Typography.Text>
                     <Typography.Text code style={{ fontSize: 11 }}>
-                      {repo.remote_url}
+                      {repo.remote_url ?? '—'}
                     </Typography.Text>
                   </div>
-                )}
 
-                {repo.local_path && (
-                  <div>
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      Path:{' '}
-                    </Typography.Text>
-                    <Typography.Text code style={{ fontSize: 11 }}>
-                      {repo.local_path}
-                    </Typography.Text>
-                  </div>
-                )}
-              </Space>
-            </Card>
-          ))}
+                  {repo.local_path && (
+                    <div>
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        Path:{' '}
+                      </Typography.Text>
+                      <Typography.Text code style={{ fontSize: 11 }}>
+                        {repo.local_path}
+                      </Typography.Text>
+                    </div>
+                  )}
+                </Space>
+              </Card>
+            );
+          })}
         </Space>
       )}
 
       {/* Create/Edit Repository Modal */}
       <Modal
-        title={isEditing ? 'Edit Repository' : 'Clone Repository'}
+        title={modalTitle}
         open={repoModalOpen}
         onOk={handleSaveRepo}
         onCancel={handleCancelModal}
-        okText={isEditing ? 'Save' : 'Clone'}
+        okText={modalOkText}
       >
         <Form form={repoForm} layout="vertical" style={{ marginTop: 16 }}>
-          {!isEditing && (
+          <Form.Item label="Repository Type">
+            <Radio.Group
+              value={repoMode}
+              onChange={handleModeChange}
+              disabled={isEditing}
+              buttonStyle="solid"
+            >
+              <Radio.Button value="remote">Remote (clone)</Radio.Button>
+              <Radio.Button value="local">Local (existing)</Radio.Button>
+            </Radio.Group>
+          </Form.Item>
+
+          {!isEditing && !isLocalMode && (
             <Form.Item
               label="Repository URL"
               name="url"
@@ -261,6 +383,19 @@ export const ReposTable: React.FC<ReposTableProps> = ({ repos, onCreate, onUpdat
             </Form.Item>
           )}
 
+          {!isEditing && isLocalMode && (
+            <Form.Item
+              label="Local Repository Path"
+              name="path"
+              rules={[
+                { required: true, message: 'Please enter an absolute path to a git repository' },
+              ]}
+              extra="Absolute path on this machine (supports ~/ expansion). Example: ~/code/my-app"
+            >
+              <Input placeholder="~/code/my-app" onChange={handlePathChange} autoFocus />
+            </Form.Item>
+          )}
+
           <Form.Item
             label="Repository Slug"
             name="slug"
@@ -271,20 +406,22 @@ export const ReposTable: React.FC<ReposTableProps> = ({ repos, onCreate, onUpdat
                 message: 'Slug must be in org/repo format (supports dots, hyphens, underscores)',
               },
             ]}
-            extra="Auto-detected from URL (editable). Format: org/repo (dots allowed)"
+            extra={slugHelperText}
           >
             <Input placeholder="apache/superset" disabled={isEditing} />
           </Form.Item>
 
-          <Form.Item
-            label="Default Branch"
-            name="default_branch"
-            initialValue="main"
-            rules={[{ required: true, message: 'Please enter the default branch' }]}
-            extra="The main branch to base new worktrees on (e.g., 'main', 'master', 'develop')"
-          >
-            <Input placeholder="main" />
-          </Form.Item>
+          {!isLocalMode && (
+            <Form.Item
+              label="Default Branch"
+              name="default_branch"
+              initialValue="main"
+              rules={[{ required: true, message: 'Please enter the default branch' }]}
+              extra="The main branch to base new worktrees on (e.g., 'main', 'master', 'develop')"
+            >
+              <Input placeholder="main" />
+            </Form.Item>
+          )}
         </Form>
       </Modal>
     </div>
