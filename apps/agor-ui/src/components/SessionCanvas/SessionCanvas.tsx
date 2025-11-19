@@ -74,7 +74,7 @@ interface SessionCanvasProps {
   client: AgorClient | null;
   sessionById: Map<string, Session>; // O(1) ID lookups
   sessionsByWorktree: Map<string, Session[]>; // O(1) worktree filtering
-  tasks: Record<string, Task[]>;
+  tasks: Map<string, Task[]>;
   userById: Map<string, User>; // Map-based user storage
   repoById: Map<string, Repo>; // Map-based repo storage
   worktrees: Worktree[];
@@ -85,7 +85,7 @@ interface SessionCanvasProps {
   selectedSessionId?: string | null;
   availableAgents?: AgenticToolOption[];
   mcpServerById?: Map<string, MCPServer>; // Map-based MCP server storage
-  sessionMcpServerIds?: Record<string, string[]>; // Map sessionId -> mcpServerIds[]
+  sessionMcpServerIds?: Map<string, string[]>; // Map sessionId -> mcpServerIds[]
   onSessionClick?: (sessionId: string) => void;
   onTaskClick?: (taskId: string) => void;
   onSessionUpdate?: (sessionId: string, updates: Partial<Session>) => void;
@@ -242,7 +242,7 @@ const SessionCanvas = ({
   selectedSessionId,
   availableAgents = [],
   mcpServerById = new Map(),
-  sessionMcpServerIds = {},
+  sessionMcpServerIds = new Map(),
   onSessionClick,
   onTaskClick,
   onSessionUpdate,
@@ -270,16 +270,34 @@ const SessionCanvas = ({
   // Note: sessionsByWorktree is now passed as prop (no longer computed locally)
   // This enables efficient O(1) lookups and stable references across re-renders
 
+  // Stabilize board objects for this board using a JSON key for deep equality
+  // This prevents recomputation when board objects on OTHER boards change
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Using board_id instead of board for targeted memoization
+  const boardObjectsKey = useMemo(() => {
+    if (!board) return '[]';
+    const boardObjectsArray: BoardEntityObject[] = [];
+    for (const boardObject of boardObjectById.values()) {
+      if (boardObject.board_id === board.board_id) {
+        boardObjectsArray.push(boardObject);
+      }
+    }
+    // Sort by object_id for stable JSON key
+    boardObjectsArray.sort((a, b) => a.object_id.localeCompare(b.object_id));
+    return JSON.stringify(boardObjectsArray.map((bo) => bo.object_id));
+  }, [board?.board_id, boardObjectById]);
+
+  // Index by worktree_id for O(1) lookups
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Using JSON key for deep equality of board objects
   const boardObjectByWorktree = useMemo(() => {
     if (!board) return new Map<string, BoardEntityObject>();
     const map = new Map<string, BoardEntityObject>();
-    for (const boardObject of mapToArray(boardObjectById)) {
+    for (const boardObject of boardObjectById.values()) {
       if (boardObject.board_id === board.board_id) {
         map.set(boardObject.worktree_id, boardObject);
       }
     }
     return map;
-  }, [board, boardObjectById]);
+  }, [board?.board_id, boardObjectsKey]);
 
   // Note: worktreeById is now passed as prop from parent (no longer computed locally)
   // This enables efficient O(1) lookups and stable references across re-renders
@@ -735,6 +753,7 @@ const SessionCanvas = ({
     setNodes((currentNodes) => {
       // Separate existing nodes by type
       const existingZones = currentNodes.filter((n) => n.type === 'zone');
+      const existingMarkdown = currentNodes.filter((n) => n.type === 'markdown');
       const existingCursors = currentNodes.filter((n) => n.type === 'cursor');
       const existingComments = currentNodes.filter((n) => n.type === 'comment');
 
@@ -789,8 +808,14 @@ const SessionCanvas = ({
         return { ...newNode, selected: existingNode?.selected };
       });
 
-      // Merge: zones (back) + worktrees (middle) + cursors/comments (front)
-      return [...existingZones, ...updatedWorktrees, ...existingCursors, ...existingComments];
+      // Merge: zones (back) + worktrees (middle) + markdown + cursors/comments (front)
+      return [
+        ...existingZones,
+        ...updatedWorktrees,
+        ...existingMarkdown,
+        ...existingCursors,
+        ...existingComments,
+      ];
     });
   }, [initialNodes, setNodes]);
 
@@ -1004,6 +1029,7 @@ const SessionCanvas = ({
   }, []);
 
   // Handle node drag end - persist layout to board (debounced)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: boardObjectByWorktree used via .get() method, boardObjectById removed as Map is stable
   const handleNodeDragStop: NodeDragHandler = useCallback(
     (_event, node) => {
       if (!board || !client || !reactFlowInstanceRef.current) return;
@@ -1135,10 +1161,8 @@ const SessionCanvas = ({
               }
 
               // Check if worktree was already pinned to a zone before this drag
-              const existingBoardObject = mapToArray(boardObjectById).find(
-                (bo: BoardEntityObject) =>
-                  bo.worktree_id === nodeId && bo.board_id === board.board_id
-              );
+              // Use direct Map lookup instead of array conversion for better performance
+              const existingBoardObject = boardObjectByWorktree.get(nodeId);
               const oldZoneId = existingBoardObject?.zone_id;
 
               // Calculate position to store based on new parent
@@ -1237,10 +1261,8 @@ const SessionCanvas = ({
           if (worktreeUpdates.length > 0) {
             for (const { worktree_id, position, zone_id } of worktreeUpdates) {
               // Find existing board_object or create new one
-              const existingBoardObject = mapToArray(boardObjectById).find(
-                (bo: BoardEntityObject) =>
-                  bo.worktree_id === worktree_id && bo.board_id === board.board_id
-              );
+              // Use direct Map lookup instead of array conversion for better performance
+              const existingBoardObject = boardObjectByWorktree.get(worktree_id);
 
               if (existingBoardObject) {
                 // Update existing board_object (position and zone_id)
@@ -1392,7 +1414,7 @@ const SessionCanvas = ({
         }
       }, 500);
     },
-    [board, client, batchUpdateObjectPositions, nodes, boardObjectById, worktrees, setNodes]
+    [board, client, batchUpdateObjectPositions, nodes, boardObjectByWorktree, worktrees, setNodes]
   );
 
   // Cleanup debounce timers on unmount
