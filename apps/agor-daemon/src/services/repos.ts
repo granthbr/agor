@@ -262,6 +262,7 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
     data: {
       name: string;
       ref: string;
+      refType?: 'branch' | 'tag';
       createBranch?: boolean;
       pullLatest?: boolean;
       sourceBranch?: string;
@@ -302,7 +303,8 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
       data.createBranch,
       data.pullLatest,
       data.sourceBranch,
-      userEnv
+      userEnv,
+      data.refType
     );
 
     const worktreesService = this.app.service('worktrees');
@@ -370,6 +372,7 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
         name: data.name,
         path: worktreePath,
         ref: data.ref,
+        ref_type: data.refType,
         base_ref: data.sourceBranch,
         new_branch: data.createBranch ?? false,
         worktree_unique_id: worktreeUniqueId,

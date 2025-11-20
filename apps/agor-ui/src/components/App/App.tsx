@@ -90,6 +90,7 @@ export interface AppProps {
     data: {
       name: string;
       ref: string;
+      refType?: 'branch' | 'tag';
       createBranch: boolean;
       sourceBranch: string;
       pullLatest: boolean;
@@ -290,6 +291,7 @@ export const App: React.FC<AppProps> = ({
     await onCreateWorktree?.(config.repoId, {
       name: config.name,
       ref: config.ref,
+      refType: config.refType,
       createBranch: config.createBranch,
       sourceBranch: config.sourceBranch,
       pullLatest: config.pullLatest,
