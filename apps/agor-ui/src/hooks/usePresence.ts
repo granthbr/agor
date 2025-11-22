@@ -18,6 +18,7 @@ interface UsePresenceOptions {
   boardId: BoardID | null;
   users: User[]; // All users (for looking up user details by ID)
   enabled?: boolean;
+  globalPresence?: boolean; // If true, track users across all boards (for navbar facepile)
 }
 
 interface UsePresenceResult {
@@ -32,21 +33,21 @@ interface UsePresenceResult {
  * @returns Active users for facepile and remote cursors for rendering
  */
 export function usePresence(options: UsePresenceOptions): UsePresenceResult {
-  const { client, boardId, users, enabled = true } = options;
+  const { client, boardId, users, enabled = true, globalPresence = false } = options;
 
   // Use ref for users to avoid triggering useMemo recalculation
   const usersRef = useRef(users);
   usersRef.current = users;
 
   // Separate maps for different timeouts:
-  // - cursorMap: for rendering cursors (5 second timeout)
-  // - presenceMap: for facepile (5 minute timeout)
+  // - cursorMap: for rendering cursors (5 second timeout) - board-scoped
+  // - presenceMap: for facepile (5 minute timeout) - can be global or board-scoped
   const [cursorMap, setCursorMap] = useState<
     Map<string, { x: number; y: number; timestamp: number }>
   >(new Map());
 
   const [presenceMap, setPresenceMap] = useState<
-    Map<string, { x: number; y: number; timestamp: number }>
+    Map<string, { boardId: BoardID; x: number; y: number; timestamp: number }>
   >(new Map());
 
   useEffect(() => {
@@ -58,59 +59,88 @@ export function usePresence(options: UsePresenceOptions): UsePresenceResult {
 
     // Handle cursor-moved events
     const handleCursorMoved = (event: CursorMovedEvent) => {
-      // Only track cursors for this board
-      if (event.boardId !== boardId) return;
+      // For cursor rendering, only track cursors for the current board
+      if (event.boardId === boardId) {
+        const updateData = {
+          x: event.x,
+          y: event.y,
+          timestamp: event.timestamp,
+        };
 
-      const updateData = {
-        x: event.x,
-        y: event.y,
-        timestamp: event.timestamp,
-      };
+        // Update cursor map (for rendering cursors) - board-scoped only
+        setCursorMap((prev) => {
+          const next = new Map(prev);
+          const existing = prev.get(event.userId);
 
-      // Update cursor map (for rendering cursors)
-      setCursorMap((prev) => {
-        const next = new Map(prev);
-        const existing = prev.get(event.userId);
+          // Only update if this event is newer than the existing one (prevent out-of-order updates)
+          if (existing && event.timestamp < existing.timestamp) {
+            return prev; // Reject stale update
+          }
 
-        // Only update if this event is newer than the existing one (prevent out-of-order updates)
-        if (existing && event.timestamp < existing.timestamp) {
-          return prev; // Reject stale update
-        }
+          next.set(event.userId, updateData);
+          return next;
+        });
+      }
 
-        next.set(event.userId, updateData);
-        return next;
-      });
+      // For presence (facepile), track globally or board-scoped based on globalPresence flag
+      if (globalPresence || event.boardId === boardId) {
+        const presenceData = {
+          boardId: event.boardId,
+          x: event.x,
+          y: event.y,
+          timestamp: event.timestamp,
+        };
 
-      // Update presence map (for facepile)
-      setPresenceMap((prev) => {
-        const next = new Map(prev);
-        const existing = prev.get(event.userId);
+        // Update presence map (for facepile)
+        setPresenceMap((prev) => {
+          const next = new Map(prev);
+          const existing = prev.get(event.userId);
 
-        // Only update if this event is newer than the existing one
-        if (existing && event.timestamp < existing.timestamp) {
-          return prev; // Reject stale update
-        }
+          // Only update if this event is newer than the existing one
+          if (existing && event.timestamp < existing.timestamp) {
+            return prev; // Reject stale update
+          }
 
-        next.set(event.userId, updateData);
-        return next;
-      });
+          next.set(event.userId, presenceData);
+          return next;
+        });
+      }
     };
 
     // Handle cursor-left events (user navigated away)
     const handleCursorLeft = (event: { userId: string; boardId: BoardID }) => {
-      if (event.boardId !== boardId) return;
+      // For cursor rendering, only handle current board
+      if (event.boardId === boardId) {
+        setCursorMap((prev) => {
+          const next = new Map(prev);
+          next.delete(event.userId);
+          return next;
+        });
+      }
 
-      setCursorMap((prev) => {
-        const next = new Map(prev);
-        next.delete(event.userId);
-        return next;
-      });
+      // For presence (facepile), handle globally or board-scoped
+      if (globalPresence || event.boardId === boardId) {
+        setPresenceMap((prev) => {
+          const next = new Map(prev);
 
-      setPresenceMap((prev) => {
-        const next = new Map(prev);
-        next.delete(event.userId);
-        return next;
-      });
+          // In global presence mode, only delete if the stored boardId matches the leave event
+          // This prevents removing users who switched boards but haven't moved their cursor yet
+          if (globalPresence) {
+            const existing = prev.get(event.userId);
+            if (existing && existing.boardId === event.boardId) {
+              next.delete(event.userId);
+            } else {
+              // User is on a different board now, keep them in the map
+              return prev;
+            }
+          } else {
+            // Board-scoped mode: always delete on leave
+            next.delete(event.userId);
+          }
+
+          return next;
+        });
+      }
     };
 
     // Subscribe to WebSocket events
@@ -174,7 +204,7 @@ export function usePresence(options: UsePresenceOptions): UsePresenceResult {
       clearInterval(cursorCleanupInterval);
       clearInterval(presenceCleanupInterval);
     };
-  }, [client, boardId, enabled]);
+  }, [client, boardId, enabled, globalPresence]);
 
   // Derive active users and remote cursors from separate maps
   // - activeUsers from presenceMap (5 minute timeout for facepile)
@@ -195,6 +225,7 @@ export function usePresence(options: UsePresenceOptions): UsePresenceResult {
       activeUsers.push({
         user,
         lastSeen: presence.timestamp,
+        boardId: presence.boardId,
         cursor: {
           x: presence.x,
           y: presence.y,

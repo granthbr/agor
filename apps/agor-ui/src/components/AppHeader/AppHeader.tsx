@@ -1,4 +1,4 @@
-import type { ActiveUser, Board, User, Worktree } from '@agor/core/types';
+import type { ActiveUser, Board, BoardID, User, Worktree } from '@agor/core/types';
 import {
   ApiOutlined,
   CommentOutlined,
@@ -50,6 +50,12 @@ export interface AppHeaderProps {
   onOpenRepoSettings?: () => void;
   onOpenAuthSettings?: () => void;
   onOpenNewWorktree?: () => void;
+  boardById?: Map<string, Board>; // For looking up board names
+  onUserClick?: (
+    userId: string,
+    boardId?: BoardID,
+    cursorPosition?: { x: number; y: number }
+  ) => void; // Navigate to user's board
 }
 
 export const AppHeader: React.FC<AppHeaderProps> = ({
@@ -82,6 +88,8 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   onOpenRepoSettings,
   onOpenAuthSettings,
   onOpenNewWorktree,
+  boardById,
+  onUserClick,
 }) => {
   const { token } = theme.useToken();
   const userEmoji = user?.emoji || '👤';
@@ -200,6 +208,8 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
               activeUsers={activeUsers}
               currentUserId={currentUserId}
               maxVisible={5}
+              boardById={boardById}
+              onUserClick={onUserClick}
               style={{
                 marginRight: 8,
               }}
