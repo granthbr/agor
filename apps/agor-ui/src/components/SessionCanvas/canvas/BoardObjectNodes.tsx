@@ -293,6 +293,7 @@ const ZoneNodeComponent = ({ data, selected }: { data: ZoneNodeData; selected?: 
             transform: `translateX(-50%) scale(${scale})`,
             transformOrigin: 'center bottom',
             display: 'flex',
+            alignItems: 'center',
             gap: '8px',
             padding: '6px',
             background: token.colorBgElevated,
@@ -324,6 +325,7 @@ const ZoneNodeComponent = ({ data, selected }: { data: ZoneNodeData; selected?: 
                 color: token.colorTextSecondary,
                 fontWeight: 500,
                 userSelect: 'none',
+                lineHeight: 1,
               }}
             >
               Border
@@ -353,15 +355,18 @@ const ZoneNodeComponent = ({ data, selected }: { data: ZoneNodeData; selected?: 
               <button
                 type="button"
                 style={{
-                  width: '24px',
-                  height: '24px',
-                  borderRadius: '4px',
+                  width: '20px',
+                  height: '20px',
+                  borderRadius: '3px',
                   backgroundColor: borderColor,
-                  border: `2px solid ${token.colorBorder}`,
+                  border: `1px solid ${token.colorBorder}`,
                   userSelect: 'none',
                   cursor: 'pointer',
                   padding: 0,
                   boxShadow: token.boxShadowSecondary,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                 }}
                 title="Change border color"
               />
@@ -370,9 +375,10 @@ const ZoneNodeComponent = ({ data, selected }: { data: ZoneNodeData; selected?: 
           <div
             style={{
               width: '1px',
-              height: '20px',
+              height: '24px',
               backgroundColor: token.colorBorder,
               margin: '0 2px',
+              alignSelf: 'center',
             }}
           />
           {/* Background Color Picker */}
@@ -392,6 +398,7 @@ const ZoneNodeComponent = ({ data, selected }: { data: ZoneNodeData; selected?: 
                 color: token.colorTextSecondary,
                 fontWeight: 500,
                 userSelect: 'none',
+                lineHeight: 1,
               }}
             >
               Fill
@@ -426,15 +433,18 @@ const ZoneNodeComponent = ({ data, selected }: { data: ZoneNodeData; selected?: 
               <button
                 type="button"
                 style={{
-                  width: '24px',
-                  height: '24px',
-                  borderRadius: '4px',
+                  width: '20px',
+                  height: '20px',
+                  borderRadius: '3px',
                   backgroundColor: backgroundColor,
-                  border: `2px solid ${token.colorBorder}`,
+                  border: `1px solid ${token.colorBorder}`,
                   userSelect: 'none',
                   cursor: 'pointer',
                   padding: 0,
                   boxShadow: token.boxShadowSecondary,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                 }}
                 title="Change background color"
               />
@@ -443,9 +453,10 @@ const ZoneNodeComponent = ({ data, selected }: { data: ZoneNodeData; selected?: 
           <div
             style={{
               width: '1px',
-              height: '20px',
+              height: '24px',
               backgroundColor: token.colorBorder,
               margin: '0 2px',
+              alignSelf: 'center',
             }}
           />
           {/* Lock/Unlock Button */}
@@ -480,19 +491,27 @@ const ZoneNodeComponent = ({ data, selected }: { data: ZoneNodeData; selected?: 
             title={data.locked ? 'Unlock zone' : 'Lock zone'}
           >
             {data.locked ? (
-              <LockOutlined style={{ fontSize: '12px', color: token.colorWarning }} />
+              <LockOutlined
+                style={{
+                  fontSize: '12px',
+                  color: token.colorWarning,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              />
             ) : (
-              <UnlockOutlined style={{ fontSize: '12px', color: token.colorText }} />
+              <UnlockOutlined
+                style={{
+                  fontSize: '12px',
+                  color: token.colorText,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              />
             )}
           </button>
-          <div
-            style={{
-              width: '1px',
-              height: '20px',
-              backgroundColor: token.colorBorder,
-              margin: '0 2px',
-            }}
-          />
           <button
             type="button"
             onPointerDown={(e) => {
@@ -523,7 +542,15 @@ const ZoneNodeComponent = ({ data, selected }: { data: ZoneNodeData; selected?: 
             }}
             title="Configure zone"
           >
-            <SettingOutlined style={{ fontSize: '12px', color: token.colorText }} />
+            <SettingOutlined
+              style={{
+                fontSize: '12px',
+                color: token.colorText,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            />
           </button>
           <button
             type="button"
@@ -564,7 +591,14 @@ const ZoneNodeComponent = ({ data, selected }: { data: ZoneNodeData; selected?: 
             }}
             title="Delete zone"
           >
-            <DeleteOutlined style={{ fontSize: '12px' }} />
+            <DeleteOutlined
+              style={{
+                fontSize: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            />
           </button>
         </div>
         <div
