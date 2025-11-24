@@ -24,7 +24,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig, resolveUserEnvironment } from '@agor/core/config';
-import { type Database, WorktreeRepository } from '@agor/core/db';
+import { type Database, formatShortId, WorktreeRepository } from '@agor/core/db';
 import type { Application } from '@agor/core/feathers';
 import type { AuthenticatedParams, UserID, WorktreeID } from '@agor/core/types';
 import * as pty from '@homebridge/node-pty-prebuilt-multiarch';
@@ -205,8 +205,8 @@ export class TerminalsService {
     const resolvedUserId = data.userId ?? authenticatedUserId;
     const userSessionSuffix = (() => {
       if (!resolvedUserId) return 'shared';
-      const sanitized = resolvedUserId.replace(/[^a-zA-Z0-9_-]/g, '');
-      return sanitized.length > 0 ? sanitized : 'user';
+      // Use short ID (8 chars) to keep Zellij session names under length limit
+      return formatShortId(resolvedUserId);
     })();
 
     // Resolve worktree context if provided
@@ -415,11 +415,8 @@ export class TerminalsService {
           runZellijAction(zellijSession, `go-to-tab-name "${tabName}"`);
         }
 
-        // Set initial terminal size
-        runZellijAction(
-          zellijSession,
-          `resize --width ${data.cols || 80} --height ${data.rows || 30}`
-        );
+        // Terminal size is handled by PTY (node-pty sends SIGWINCH to Zellij)
+        // No explicit Zellij resize action needed
       } catch (error) {
         console.warn('Failed to configure Zellij tab:', error);
       }
