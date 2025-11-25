@@ -638,15 +638,32 @@ function AppContent() {
     }
   };
 
-  const handleDeleteRepo = async (repoId: string) => {
+  const handleDeleteRepo = async (repoId: string, cleanup: boolean) => {
     if (!client) return;
     try {
-      await client.service('repos').remove(repoId);
-      showSuccess('Repository deleted successfully!');
+      await client.service('repos').remove(repoId, {
+        query: { cleanup },
+      });
+      if (cleanup) {
+        showSuccess('Repository and files deleted successfully!');
+      } else {
+        showSuccess('Repository removed from Agor (files preserved)');
+      }
     } catch (error) {
-      showError(
-        `Failed to delete repository: ${error instanceof Error ? error.message : String(error)}`
-      );
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      // Check for partial deletion (some files deleted, some failed)
+      if (errorMessage.includes('Partial deletion occurred:')) {
+        showError(`⚠️ PARTIAL DELETION: Some files were permanently deleted. ${errorMessage}`);
+      }
+      // Check for complete failure (no files deleted)
+      else if (errorMessage.includes('No files were deleted')) {
+        showError(`Deletion failed, but no files were removed. ${errorMessage}`);
+      }
+      // Generic failure
+      else {
+        showError(`Failed to delete repository: ${errorMessage}`);
+      }
     }
   };
 

@@ -44,6 +44,7 @@ import { DrizzleService } from '../adapters/drizzle';
 export type RepoParams = QueryParams<{
   slug?: string;
   managed_by_agor?: boolean;
+  cleanup?: boolean; // For delete operations: true = delete filesystem, false = database only
 }>;
 
 async function deriveLocalRepoSlug(path: string, explicitSlug?: string): Promise<RepoSlug> {
@@ -453,6 +454,111 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
     writeAgorYml(agorYmlPath, repo.environment_config);
 
     return { path: agorYmlPath };
+  }
+
+  /**
+   * Override remove to support filesystem cleanup
+   *
+   * Supports query parameter: ?cleanup=true to delete filesystem directories
+   *
+   * Behavior: Fail-fast transactional approach
+   * - If cleanup=true: Delete filesystem FIRST, then database (abort on filesystem failure)
+   * - If cleanup=false: Delete database only (filesystem preserved)
+   */
+  async remove(id: string, params?: RepoParams): Promise<Repo> {
+    const repo = await this.get(id, params);
+    const cleanup = params?.query?.cleanup === true;
+
+    // Get ALL worktrees for this repo (needed for both filesystem and database cleanup)
+    const worktreesService = this.app.service('worktrees');
+    const worktreesResult = await worktreesService.find({
+      ...params,
+      query: { repo_id: repo.repo_id },
+      paginate: false,
+    });
+
+    const worktrees = (
+      Array.isArray(worktreesResult) ? worktreesResult : worktreesResult.data
+    ) as Worktree[];
+
+    // If cleanup is requested and this is a remote repo, delete filesystem directories FIRST
+    if (cleanup && repo.repo_type === 'remote') {
+      const { deleteRepoDirectory, deleteWorktreeDirectory } = await import('@agor/core/git');
+
+      // Track successfully deleted paths for honest error reporting
+      const deletedPaths: string[] = [];
+
+      // FAIL FAST: Stop on first filesystem deletion failure
+      // Delete worktree directories from filesystem
+      for (const worktree of worktrees) {
+        try {
+          await deleteWorktreeDirectory(worktree.path);
+          deletedPaths.push(worktree.path);
+          console.log(`🗑️  Deleted worktree directory: ${worktree.path}`);
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          console.error(`❌ Failed to delete worktree directory ${worktree.path}:`, errorMsg);
+
+          // Be honest about partial deletion
+          if (deletedPaths.length > 0) {
+            throw new Error(
+              `Partial deletion occurred: Successfully deleted ${deletedPaths.length} path(s): ${deletedPaths.join(', ')}. ` +
+                `Failed at ${worktree.path}: ${errorMsg}. ` +
+                `Database NOT modified. Manual cleanup required for deleted paths.`
+            );
+          } else {
+            throw new Error(
+              `Cannot delete repository: Failed to delete worktree at ${worktree.path}: ${errorMsg}. ` +
+                `No files were deleted. Please fix this issue and retry.`
+            );
+          }
+        }
+      }
+
+      // Delete repository directory from filesystem
+      try {
+        await deleteRepoDirectory(repo.local_path);
+        deletedPaths.push(repo.local_path);
+        console.log(`🗑️  Deleted repository directory: ${repo.local_path}`);
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error(`❌ Failed to delete repository directory ${repo.local_path}:`, errorMsg);
+
+        // Be honest about partial deletion (worktrees were deleted, repo failed)
+        throw new Error(
+          `Partial deletion occurred: Successfully deleted ${deletedPaths.length} path(s): ${deletedPaths.join(', ')}. ` +
+            `Failed to delete repository directory at ${repo.local_path}: ${errorMsg}. ` +
+            `Database NOT modified. Manual cleanup required for deleted paths.`
+        );
+      }
+
+      console.log(
+        `✅ Successfully deleted ${worktrees.length} worktree director${worktrees.length === 1 ? 'y' : 'ies'} and repository directory`
+      );
+    }
+
+    // Only reach here if filesystem cleanup succeeded (or wasn't requested)
+    // Now safe to delete from database
+
+    // IMPORTANT: Use Feathers service to delete worktrees (not direct DB cascade) because:
+    // 1. WebSocket events broadcast to all clients (real-time UI updates)
+    // 2. Service hooks run properly (lifecycle, validation, etc.)
+    // 3. Session cascades trigger (sessions → tasks → messages)
+    // 4. Foreign key cascades may not be reliable (pragmas are async fire-and-forget)
+    for (const worktree of worktrees) {
+      try {
+        await worktreesService.remove(worktree.worktree_id, params);
+        console.log(`🗑️  Deleted worktree from database: ${worktree.name}`);
+      } catch (error) {
+        console.warn(
+          `⚠️  Failed to delete worktree ${worktree.name} from database:`,
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    }
+
+    // Finally, delete repository from database
+    return super.remove(id, params) as Promise<Repo>;
   }
 }
 
