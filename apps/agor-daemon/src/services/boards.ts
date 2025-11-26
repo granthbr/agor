@@ -6,16 +6,26 @@
  */
 
 import { BoardRepository, type Database } from '@agor/core/db';
-import type { Board, BoardObject, QueryParams } from '@agor/core/types';
+import type {
+  AuthenticatedParams,
+  Board,
+  BoardExportBlob,
+  BoardObject,
+  QueryParams,
+} from '@agor/core/types';
+import { NotFoundError } from '@agor/core/utils/errors';
 import { DrizzleService } from '../adapters/drizzle';
 
 /**
  * Board service params
  */
-export type BoardParams = QueryParams<{
-  slug?: string;
-  name?: string;
-}>;
+export interface BoardParams
+  extends QueryParams<{
+    slug?: string;
+    name?: string;
+  }> {
+  user?: AuthenticatedParams['user'];
+}
 
 /**
  * Extended boards service with custom methods
@@ -111,6 +121,131 @@ export class BoardsService extends DrizzleService<Board, Partial<Board>, BoardPa
     _params?: BoardParams
   ): Promise<{ board: Board; affectedSessions: string[] }> {
     return this.boardRepo.deleteZone(boardId, objectId, deleteAssociatedSessions);
+  }
+
+  /**
+   * Export board to blob (JSON)
+   */
+  async toBlob(
+    data: { boardId?: string; id?: string; slug?: string } | string,
+    _params?: BoardParams
+  ): Promise<BoardExportBlob> {
+    const boardId = await this.resolveBoardId(data);
+    return this.boardRepo.toBlob(boardId);
+  }
+
+  /**
+   * Import board from blob (JSON)
+   */
+  async fromBlob(blob: BoardExportBlob, params?: BoardParams): Promise<Board> {
+    const userId = params?.user?.user_id || 'anonymous';
+    this.boardRepo.validateBoardBlob(blob);
+    const data = this.buildBoardDataFromBlob(blob, userId);
+    return super.create(data, this.withServerProvider(params)) as Promise<Board>;
+  }
+
+  /**
+   * Export board to YAML string
+   */
+  async toYaml(
+    data: { boardId?: string; id?: string; slug?: string } | string,
+    _params?: BoardParams
+  ): Promise<string> {
+    const boardId = await this.resolveBoardId(data);
+    return this.boardRepo.toYaml(boardId);
+  }
+
+  /**
+   * Import board from YAML string
+   */
+  async fromYaml(
+    data: { yaml?: string; content?: string } | string,
+    params?: BoardParams
+  ): Promise<Board> {
+    const yamlContent = typeof data === 'string' ? data : (data.yaml ?? data.content);
+    if (!yamlContent) throw new Error('YAML content required');
+    const blob = this.boardRepo.parseYamlToBlob(yamlContent);
+    return this.fromBlob(blob, params);
+  }
+
+  /**
+   * Clone board (create copy with new ID)
+   */
+  async clone(
+    data: { boardId?: string; id?: string; name?: string; slug?: string } | string,
+    newNameOrParams?: string | BoardParams,
+    maybeParams?: BoardParams
+  ): Promise<Board> {
+    let boardIdentifier: string | undefined;
+    let name: string | undefined;
+    let params: BoardParams | undefined;
+
+    if (typeof data === 'string') {
+      boardIdentifier = data;
+      if (typeof newNameOrParams !== 'string') {
+        throw new Error('Board name required');
+      }
+      name = newNameOrParams;
+      params = maybeParams;
+    } else {
+      boardIdentifier = data.boardId ?? data.id ?? data.slug;
+      name = data.name;
+      params = (newNameOrParams as BoardParams | undefined) ?? maybeParams;
+    }
+
+    if (!boardIdentifier) throw new Error('Board ID or slug required');
+    if (!name) throw new Error('Board name required');
+
+    const userId = params?.user?.user_id || 'anonymous';
+    const resolvedBoardId = await this.resolveBoardId(boardIdentifier);
+    const blob = await this.boardRepo.toBlob(resolvedBoardId);
+    const boardData = this.buildBoardDataFromBlob(blob, userId, name);
+    return super.create(boardData, this.withServerProvider(params)) as Promise<Board>;
+  }
+
+  private async resolveBoardId(
+    data: { boardId?: string; id?: string; slug?: string } | string
+  ): Promise<string> {
+    const identifier = typeof data === 'string' ? data : (data.boardId ?? data.id ?? data.slug);
+
+    if (!identifier) {
+      throw new Error('Board ID or slug required');
+    }
+
+    const board = await this.boardRepo.findBySlugOrId(identifier);
+    if (!board) {
+      throw new NotFoundError('Board', identifier);
+    }
+
+    return board.board_id;
+  }
+
+  private withServerProvider(params?: BoardParams): BoardParams {
+    return {
+      ...(params ?? {}),
+      provider: params?.provider ?? 'server',
+    } as BoardParams;
+  }
+
+  private buildBoardDataFromBlob(
+    blob: BoardExportBlob,
+    userId: string,
+    nameOverride?: string
+  ): Partial<Board> {
+    const name = nameOverride ?? blob.name;
+    const slug = nameOverride ? nameOverride : (blob.slug ?? blob.name);
+
+    return {
+      name,
+      slug,
+      description: blob.description,
+      icon: blob.icon,
+      color: blob.color,
+      background_color: blob.background_color,
+      objects: blob.objects,
+      custom_context: blob.custom_context,
+      created_by: userId,
+    };
   }
 }
 

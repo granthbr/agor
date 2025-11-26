@@ -174,3 +174,27 @@ export interface Board {
    */
   custom_context?: Record<string, unknown>;
 }
+
+/**
+ * Portable board export format (shell only)
+ *
+ * Contains board metadata and annotations, but no worktrees or sessions.
+ * Can be serialized to YAML/JSON for sharing or archival.
+ */
+export interface BoardExportBlob {
+  // Core metadata
+  name: string;
+  slug?: string;
+  description?: string;
+  icon?: string;
+  color?: string;
+  background_color?: string;
+
+  // Annotations (zones, text, markdown)
+  objects?: {
+    [objectId: string]: BoardObject;
+  };
+
+  // Custom context for templates
+  custom_context?: Record<string, unknown>;
+}

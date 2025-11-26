@@ -1,6 +1,15 @@
+import type { AgorClient } from '@agor/core/api';
 import type { Board, Session, Worktree } from '@agor/core/types';
-import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
 import {
+  CopyOutlined,
+  DeleteOutlined,
+  DownloadOutlined,
+  EditOutlined,
+  PlusOutlined,
+  UploadOutlined,
+} from '@ant-design/icons';
+import {
+  App,
   Button,
   Checkbox,
   ColorPicker,
@@ -12,10 +21,12 @@ import {
   Select,
   Space,
   Table,
+  Tooltip,
   Typography,
 } from 'antd';
 import { useMemo, useState } from 'react';
 import { mapToArray } from '@/utils/mapHelpers';
+import { useThemedMessage } from '@/utils/message';
 import { FormEmojiPickerInput } from '../EmojiPickerInput';
 import { JSONEditor, validateJSON } from '../JSONEditor';
 
@@ -93,6 +104,7 @@ const BACKGROUND_PRESETS = [
 ];
 
 interface BoardsTableProps {
+  client: AgorClient | null;
   boardById: Map<string, Board>;
   sessionsByWorktree: Map<string, Session[]>; // O(1) worktree filtering
   worktreeById: Map<string, Worktree>;
@@ -102,6 +114,7 @@ interface BoardsTableProps {
 }
 
 export const BoardsTable: React.FC<BoardsTableProps> = ({
+  client,
   boardById,
   sessionsByWorktree,
   worktreeById,
@@ -109,6 +122,8 @@ export const BoardsTable: React.FC<BoardsTableProps> = ({
   onUpdate,
   onDelete,
 }) => {
+  const { modal } = App.useApp();
+  const { showSuccess, showError } = useThemedMessage();
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingBoard, setEditingBoard] = useState<Board | null>(null);
@@ -207,6 +222,112 @@ export const BoardsTable: React.FC<BoardsTableProps> = ({
     onDelete?.(boardId);
   };
 
+  // Clone board (inline prompt for new name)
+  const handleClone = (board: Board) => {
+    const defaultName = `${board.name} (Copy)`;
+    let newName = defaultName;
+
+    modal.confirm({
+      title: 'Clone Board',
+      content: (
+        <Input
+          placeholder="New board name"
+          defaultValue={defaultName}
+          onChange={(e) => {
+            newName = e.target.value;
+          }}
+          onPressEnter={(e) => {
+            e.preventDefault();
+          }}
+        />
+      ),
+      onOk: () => {
+        if (!client) {
+          showError('Not connected to daemon');
+          return Promise.reject(new Error('Not connected to daemon'));
+        }
+
+        // Call service method directly
+        const boardsService = client.service('boards');
+        return boardsService
+          .clone({ id: board.board_id, name: newName })
+          .then((clonedBoard) => {
+            showSuccess(`Board cloned: ${clonedBoard.name}`);
+            // Trigger parent refresh by calling onCreate
+            onCreate?.(clonedBoard);
+          })
+          .catch((error) => {
+            showError(`Clone failed: ${error instanceof Error ? error.message : String(error)}`);
+            return Promise.reject(error);
+          });
+      },
+    });
+  };
+
+  // Export board (download YAML file)
+  const handleExport = async (board: Board) => {
+    if (!client) {
+      showError('Not connected to daemon');
+      return;
+    }
+    try {
+      // Call service method directly
+      const boardsService = client.service('boards');
+      const yaml = await boardsService.toYaml({ id: board.board_id });
+
+      // Trigger download
+      const blob = new Blob([yaml], { type: 'text/yaml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${board.slug || board.name.toLowerCase().replace(/\s+/g, '-')}.agor-board.yaml`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      showSuccess('Board exported');
+    } catch (error) {
+      showError(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  // Import board (file picker dialog)
+  const handleImportClick = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.yaml,.yml,.json';
+    input.onchange = (e) => handleImportFile((e.target as HTMLInputElement).files?.[0]);
+    input.click();
+  };
+
+  const handleImportFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (!client) {
+      showError('Not connected to daemon');
+      return;
+    }
+
+    const content = await file.text();
+
+    try {
+      const boardsService = client.service('boards');
+      let board: Board;
+
+      if (file.name.endsWith('.json')) {
+        // Import from JSON blob
+        board = await boardsService.fromBlob(JSON.parse(content));
+      } else {
+        // Import from YAML
+        board = await boardsService.fromYaml({ yaml: content });
+      }
+
+      showSuccess(`Board imported: ${board.name}`);
+      // Trigger parent refresh by calling onCreate
+      onCreate?.(board);
+    } catch (error) {
+      showError(`Import failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
   const columns = [
     {
       title: 'Icon',
@@ -235,15 +356,33 @@ export const BoardsTable: React.FC<BoardsTableProps> = ({
     {
       title: 'Actions',
       key: 'actions',
-      width: 120,
+      width: 240,
       render: (_: unknown, board: Board) => (
         <Space size="small">
-          <Button
-            type="text"
-            size="small"
-            icon={<EditOutlined />}
-            onClick={() => handleEdit(board)}
-          />
+          <Tooltip title="Clone board (zones, configuration, and positions only)">
+            <Button
+              type="text"
+              size="small"
+              icon={<CopyOutlined />}
+              onClick={() => handleClone(board)}
+            />
+          </Tooltip>
+          <Tooltip title="Export board to YAML (zones, configuration, and positions only)">
+            <Button
+              type="text"
+              size="small"
+              icon={<DownloadOutlined />}
+              onClick={() => handleExport(board)}
+            />
+          </Tooltip>
+          <Tooltip title="Edit board settings">
+            <Button
+              type="text"
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => handleEdit(board)}
+            />
+          </Tooltip>
           <Popconfirm
             title="Delete board?"
             description={`Are you sure you want to delete "${board.name}"? Sessions will not be deleted.`}
@@ -252,7 +391,9 @@ export const BoardsTable: React.FC<BoardsTableProps> = ({
             cancelText="Cancel"
             okButtonProps={{ danger: true }}
           >
-            <Button type="text" size="small" icon={<DeleteOutlined />} danger />
+            <Tooltip title="Delete board (sessions will not be deleted)">
+              <Button type="text" size="small" icon={<DeleteOutlined />} danger />
+            </Tooltip>
           </Popconfirm>
         </Space>
       ),
@@ -272,9 +413,14 @@ export const BoardsTable: React.FC<BoardsTableProps> = ({
         <Typography.Text type="secondary">
           Create and manage boards for organizing sessions.
         </Typography.Text>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalOpen(true)}>
-          New Board
-        </Button>
+        <Space>
+          <Button icon={<UploadOutlined />} onClick={handleImportClick}>
+            Import Board
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalOpen(true)}>
+            New Board
+          </Button>
+        </Space>
       </div>
 
       <Table
@@ -298,16 +444,17 @@ export const BoardsTable: React.FC<BoardsTableProps> = ({
         okText="Create"
       >
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item
-            label="Name"
-            rules={[{ required: true, message: 'Please enter a board name' }]}
-            style={{ marginBottom: 24 }}
-          >
+          <Form.Item label="Name" style={{ marginBottom: 24 }}>
             <Flex gap={8}>
               <Form.Item name="icon" noStyle>
                 <FormEmojiPickerInput form={form} fieldName="icon" defaultEmoji="📋" />
               </Form.Item>
-              <Form.Item name="name" noStyle style={{ flex: 1 }}>
+              <Form.Item
+                name="name"
+                noStyle
+                style={{ flex: 1 }}
+                rules={[{ required: true, message: 'Please enter a board name' }]}
+              >
                 <Input placeholder="My Board" style={{ flex: 1 }} />
               </Form.Item>
             </Flex>
@@ -396,16 +543,17 @@ export const BoardsTable: React.FC<BoardsTableProps> = ({
         okText="Save"
       >
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item
-            label="Name"
-            rules={[{ required: true, message: 'Please enter a board name' }]}
-            style={{ marginBottom: 24 }}
-          >
+          <Form.Item label="Name" style={{ marginBottom: 24 }}>
             <Flex gap={8}>
               <Form.Item name="icon" noStyle>
                 <FormEmojiPickerInput form={form} fieldName="icon" defaultEmoji="📋" />
               </Form.Item>
-              <Form.Item name="name" noStyle style={{ flex: 1 }}>
+              <Form.Item
+                name="name"
+                noStyle
+                style={{ flex: 1 }}
+                rules={[{ required: true, message: 'Please enter a board name' }]}
+              >
                 <Input placeholder="My Board" style={{ flex: 1 }} />
               </Form.Item>
             </Flex>

@@ -18,7 +18,7 @@ patchConsole();
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, type UnknownJson } from '@agor/core/config';
+import { createUserProcessEnvironment, loadConfig, type UnknownJson } from '@agor/core/config';
 
 let DAEMON_VERSION = '0.0.0';
 try {
@@ -94,6 +94,8 @@ import { registerHandlebarsHelpers } from '@agor/core/templates/handlebars-helpe
 // import { ClaudeTool, CodexTool, GeminiTool, OpenCodeTool } from '@agor/core/tools';
 import type {
   AuthenticatedParams,
+  Board,
+  HookContext,
   Id,
   Message,
   Paginated,
@@ -829,15 +831,16 @@ async function main() {
       console.log(`[Daemon] Spawning executor as current user (no impersonation)`);
     }
 
+    // Resolve user environment variables (includes user's encrypted env vars like GITHUB_TOKEN)
+    // Use the authenticated user (whoever is executing the command), not session creator
+    const userId = (params as AuthenticatedParams).user?.user_id as
+      | import('@agor/core/types').UserID
+      | undefined;
+    const executorEnv = await createUserProcessEnvironment(userId, db);
+
     const executorProcess = spawn(spawnCommand, spawnArgs, {
       cwd,
-      env: {
-        ...process.env,
-        // Executor handles API key resolution with proper precedence:
-        // 1. Per-user encrypted keys (database)
-        // 2. Global config.yaml keys
-        // 3. Environment variables (inherited from process.env above)
-      },
+      env: executorEnv,
       stdio: ['ignore', 'pipe', 'pipe'], // Capture stdout/stderr
     });
 
@@ -950,7 +953,21 @@ async function main() {
     // biome-ignore lint/suspicious/noExplicitAny: feathers-swagger docs option not typed in FeathersJS
   } as any);
 
-  app.use('/boards', createBoardsService(db));
+  app.use('/boards', createBoardsService(db), {
+    methods: [
+      'find',
+      'get',
+      'create',
+      'update',
+      'patch',
+      'remove',
+      'toBlob',
+      'fromBlob',
+      'toYaml',
+      'fromYaml',
+      'clone',
+    ],
+  });
 
   // Register board-objects service (positioned entities on boards)
   app.use('/board-objects', createBoardObjectsService(db));
@@ -1062,7 +1079,7 @@ async function main() {
     },
     after: {
       patch: [
-        async (context) => {
+        async (context: HookContext<Board>) => {
           // Detect permission resolution and notify executor via IPC
           const message = context.result as import('@agor/core/types').Message;
 
@@ -1225,7 +1242,7 @@ async function main() {
         },
       ],
       create: [
-        async (context) => {
+        async (context: HookContext<Board>) => {
           const params = context.params as AuthenticatedParams;
 
           if (!params.provider) {
@@ -1315,11 +1332,11 @@ async function main() {
           );
 
           if (Array.isArray(context.data)) {
-            context.data.forEach((item) => {
-              if (!item.created_by) (item as Record<string, unknown>).created_by = userId;
+            context.data.forEach((item: Record<string, unknown>) => {
+              if (!item['created_by']) item['created_by'] = userId;
             });
-          } else if (context.data && !context.data.created_by) {
-            (context.data as Record<string, unknown>).created_by = userId;
+          } else if (context.data && !(context.data as Record<string, unknown>)['created_by']) {
+            (context.data as Record<string, unknown>)['created_by'] = userId;
           }
 
           // Populate repo field from worktree_id
@@ -1474,7 +1491,7 @@ async function main() {
       ],
       create: [
         requireMinimumRole('member', 'create boards'),
-        async (context) => {
+        async (context: HookContext<Board>) => {
           // Inject user_id if authenticated, otherwise use 'anonymous'
           const userId =
             (context.params as { user?: { user_id: string; email: string } }).user?.user_id ||
@@ -1492,7 +1509,7 @@ async function main() {
       ],
       patch: [
         requireMinimumRole('member', 'update boards'),
-        async (context) => {
+        async (context: HookContext<Board>) => {
           // Handle atomic board object operations via _action parameter
           const contextData = context.data || {};
           const { _action, objectId, objectData, objects, deleteAssociatedSessions } =
@@ -1566,8 +1583,14 @@ async function main() {
         },
       ],
       remove: [requireMinimumRole('member', 'delete boards')],
+      toBlob: [requireMinimumRole('member', 'export boards')],
+      toYaml: [requireMinimumRole('member', 'export boards')],
+      fromBlob: [requireMinimumRole('member', 'import boards')],
+      fromYaml: [requireMinimumRole('member', 'import boards')],
+      clone: [requireMinimumRole('member', 'clone boards')],
     },
-  });
+    // biome-ignore lint/suspicious/noExplicitAny: Custom service methods not in default hook map
+  } as any);
 
   // Configure authentication options BEFORE creating service
   // Note: jwtSecret is initialized earlier (before Socket.io config)
