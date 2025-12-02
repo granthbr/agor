@@ -18,7 +18,7 @@ import type { SessionID, TaskID } from '../../types.js';
 import { MessageRole } from '../../types.js';
 import type { SessionsService, TasksService } from './claude-tool.js';
 import { type ProcessedEvent, SDKMessageProcessor } from './message-processor.js';
-import { setupQuery } from './query-builder.js';
+import { type InterruptibleQuery, setupQuery } from './query-builder.js';
 
 export interface PromptResult {
   /** Assistant messages (can be multiple: tool invocation, then response) */
@@ -52,14 +52,19 @@ export class ClaudePromptService {
   private static readonly IDLE_TIMEOUT_MS = 300000; // 5 minutes
 
   /** Store active Query objects per session for interruption */
-  // biome-ignore lint/suspicious/noExplicitAny: Query type from SDK is complex
-  private activeQueries = new Map<SessionID, any>();
+  private activeQueries = new Map<SessionID, InterruptibleQuery>();
 
   /** Track stop requests for immediate loop breaking */
   private stopRequested = new Map<SessionID, boolean>();
 
   /** Serialize permission checks per session to prevent duplicate prompts for concurrent tool calls */
   private permissionLocks = new Map<SessionID, Promise<void>>();
+
+  /** Active stop monitors per session - cleanup handles for concurrent stop detection */
+  private stopMonitors = new Map<SessionID, NodeJS.Timeout>();
+
+  /** Track if interrupt() is in flight to prevent overlapping calls */
+  private interruptInFlight = new Map<SessionID, boolean>();
 
   constructor(
     private messagesRepo: MessagesRepository,
@@ -140,6 +145,10 @@ export class ClaudePromptService {
     this.activeQueries.set(sessionId, result);
     console.log(`📌 Stored query reference for session ${sessionId.substring(0, 8)}`);
 
+    // 🔥 Start concurrent stop monitor - polls stopRequested independently of message loop
+    // This ensures stop works even during long-running tool executions (build, lint, etc.)
+    this.startStopMonitor(sessionId, result);
+
     try {
       for await (const msg of result) {
         // Check if stop was requested before processing message
@@ -199,6 +208,23 @@ export class ClaudePromptService {
     } catch (error) {
       const state = processor.getState();
 
+      // Check if this is an AbortError from interrupt() - this is EXPECTED during stop
+      if (
+        error instanceof Error &&
+        (error.name === 'AbortError' || error.message.includes('abort'))
+      ) {
+        console.log(
+          `🛑 [Stop] Query aborted via interrupt() for session ${sessionId.substring(0, 8)} - this is expected`
+        );
+        // Yield stopped event if we haven't already
+        if (this.stopRequested.get(sessionId)) {
+          yield { type: 'stopped' } as ProcessedEvent;
+          this.stopRequested.delete(sessionId);
+        }
+        // Don't throw - this is a clean stop, not an error
+        return;
+      }
+
       // Get actual error message from stderr if available
       const stderrOutput = getStderr();
       const errorContext = stderrOutput ? `\n\nClaude Code stderr output:\n${stderrOutput}` : '';
@@ -219,6 +245,14 @@ export class ClaudePromptService {
       });
       throw enhancedError;
     } finally {
+      // Stop the concurrent stop monitor
+      this.stopStopMonitor(sessionId);
+
+      // CRITICAL: Always clear stopRequested flag to prevent poisoning the session
+      // If we don't clear it here, a stop near the end leaves the flag set forever,
+      // causing the next prompt to auto-stop immediately
+      this.stopRequested.delete(sessionId);
+
       // Clean up query reference - always runs regardless of success/failure/stop
       this.activeQueries.delete(sessionId);
       console.log(`🧹 Cleaned up query reference for session ${sessionId.substring(0, 8)}`);
@@ -281,6 +315,9 @@ export class ClaudePromptService {
       `📌 Stored query reference for session ${sessionId.substring(0, 8)} (non-streaming)`
     );
 
+    // 🔥 Start concurrent stop monitor (same as streaming mode)
+    this.startStopMonitor(sessionId, result);
+
     // Collect response messages from async generator
     // IMPORTANT: Keep assistant messages SEPARATE (don't merge into one)
     const assistantMessages: Array<{
@@ -333,7 +370,32 @@ export class ClaudePromptService {
           }
         }
       }
+    } catch (error) {
+      // Check if this is an AbortError from interrupt() - this is EXPECTED during stop
+      if (
+        error instanceof Error &&
+        (error.name === 'AbortError' || error.message.includes('abort'))
+      ) {
+        console.log(
+          `🛑 [Stop] Query aborted via interrupt() for session ${sessionId.substring(0, 8)} (non-streaming) - this is expected`
+        );
+        // Don't throw - this is a clean stop, not an error
+        // Return empty result since we were stopped
+        return {
+          messages: assistantMessages,
+          inputTokens: tokenUsage?.input_tokens || 0,
+          outputTokens: tokenUsage?.output_tokens || 0,
+        };
+      }
+      // Re-throw other errors
+      throw error;
     } finally {
+      // Stop the concurrent stop monitor
+      this.stopStopMonitor(sessionId);
+
+      // CRITICAL: Always clear stopRequested flag to prevent poisoning the session
+      this.stopRequested.delete(sessionId);
+
       // Clean up query reference - always runs regardless of success/failure/stop
       this.activeQueries.delete(sessionId);
       console.log(
@@ -350,10 +412,85 @@ export class ClaudePromptService {
   }
 
   /**
+   * Start concurrent stop monitor for a session
+   *
+   * This monitor polls stopRequested every 100ms and calls interrupt() immediately when detected.
+   * This is CRITICAL for stopping long-running tool executions (build, lint, etc.) where the
+   * SDK doesn't yield messages for extended periods.
+   *
+   * Without this monitor, stop only works when the message loop iterates, which may not happen
+   * for 30+ seconds during tool execution.
+   *
+   * @param sessionId - Session to monitor
+   * @param query - Query object with interrupt() method
+   */
+  private startStopMonitor(sessionId: SessionID, query: InterruptibleQuery): void {
+    // Check every 100ms - fast enough to feel instant (<100ms is imperceptible to users)
+    // but light enough to not impact performance (simple boolean check 10x/second)
+    const checkInterval = setInterval(async () => {
+      // Only proceed if stop was requested AND we're not already calling interrupt()
+      if (!this.stopRequested.get(sessionId)) {
+        return;
+      }
+
+      // Prevent overlapping interrupt() calls
+      if (this.interruptInFlight.get(sessionId)) {
+        return;
+      }
+
+      console.log(
+        `🔥 [Stop Monitor] Detected stop request for ${sessionId.substring(0, 8)}, calling interrupt()...`
+      );
+
+      this.interruptInFlight.set(sessionId, true);
+
+      try {
+        // Call interrupt() IMMEDIATELY - don't wait for next message in loop
+        await query.interrupt();
+        console.log(`✅ [Stop Monitor] interrupt() called successfully`);
+        // Note: interrupt() causes the SDK to stop yielding messages
+        // The main loop will detect this via stopRequested check and yield { type: 'stopped' }
+        // This ensures wasStopped flag is set properly in claude-tool.ts
+
+        // Success! Stop monitoring since interrupt worked
+        this.stopStopMonitor(sessionId);
+      } catch (error) {
+        console.error(`❌ [Stop Monitor] interrupt() failed:`, error);
+        // Don't stop monitoring - keep trying in case it was a transient error
+        // The finally block cleanup will handle stopRequested regardless
+      } finally {
+        this.interruptInFlight.delete(sessionId);
+      }
+    }, 100); // Poll every 100ms
+
+    this.stopMonitors.set(sessionId, checkInterval);
+    console.log(`👁️  [Stop Monitor] Started for session ${sessionId.substring(0, 8)}`);
+  }
+
+  /**
+   * Stop the concurrent stop monitor for a session
+   *
+   * Called when query completes naturally or is interrupted.
+   */
+  private stopStopMonitor(sessionId: SessionID): void {
+    const monitor = this.stopMonitors.get(sessionId);
+    if (monitor) {
+      clearInterval(monitor);
+      this.stopMonitors.delete(sessionId);
+      this.interruptInFlight.delete(sessionId); // Clean up in-flight flag too
+      console.log(`👁️  [Stop Monitor] Stopped for session ${sessionId.substring(0, 8)}`);
+    }
+  }
+
+  /**
    * Stop currently executing task
    *
    * Uses Claude Agent SDK's native interrupt() method to gracefully stop execution.
    * This is the same mechanism used by the Escape key in Claude Code CLI.
+   *
+   * NOTE: The actual interrupt() call happens in the concurrent stop monitor (startStopMonitor)
+   * which polls stopRequested every 100ms. This ensures stop works even during long-running
+   * tool executions where SDK messages aren't being yielded.
    *
    * @param sessionId - Session identifier
    * @returns Success status
@@ -371,20 +508,16 @@ export class ClaudePromptService {
     }
 
     try {
-      // Set stop flag first for immediate loop breaking
+      // Set stop flag - the concurrent monitor will detect this within 100ms and call interrupt()
       this.stopRequested.set(sessionId, true);
+      console.log(
+        `🚩 [Stop Task] Set stopRequested flag - monitor will call interrupt() within 100ms`
+      );
 
-      // Call native interrupt() method on Query object
-      // This is exactly what the Escape key uses in Claude Code CLI
-      await queryObj.interrupt();
-
-      // Clean up query reference
-      this.activeQueries.delete(sessionId);
-
-      console.log(`✅ Stopped Claude execution for session ${sessionId.substring(0, 8)}`);
+      console.log(`✅ Initiated stop for session ${sessionId.substring(0, 8)}`);
       return { success: true };
     } catch (error) {
-      console.error('Failed to interrupt Claude execution:', error);
+      console.error('Failed to set stop flag:', error);
       // Clean up stop flag on error
       this.stopRequested.delete(sessionId);
       return {
