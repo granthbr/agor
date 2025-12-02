@@ -177,6 +177,38 @@ export class TasksService extends DrizzleService<Task, Partial<Task>, TaskParams
           const session = await this.app.service('sessions').get(task.session_id, params);
           if (session.genealogy?.parent_session_id) {
             await this.queueParentCallback(task, session, params);
+
+            // CRITICAL FIX: After queuing callback to parent, trigger parent's queue processing
+            // if parent is idle. This ensures callbacks don't sit in the queue forever.
+            // IMPORTANT: Isolated in try/catch so parent failures don't break child queue processing
+            try {
+              // biome-ignore lint/suspicious/noExplicitAny: Service type casting required for custom method access
+              const sessionsService = this.app.service('sessions') as any;
+              if (sessionsService.triggerQueueProcessing) {
+                // Get parent session to check if it's idle
+                // NOTE: Don't pass params here - we fetch parent without child's auth context
+                const parentSession = await this.app
+                  .service('sessions')
+                  .get(session.genealogy.parent_session_id);
+                if (parentSession.status === 'idle' && parentSession.ready_for_prompt) {
+                  console.log(
+                    `🔄 [TasksService] Triggering parent queue processing for ${parentSession.session_id.substring(0, 8)} (callback queued)`
+                  );
+                  // Pass empty params to avoid leaking child's auth context to parent
+                  // The queue processor will reconstruct parent auth from queued message metadata
+                  await sessionsService.triggerQueueProcessing(
+                    session.genealogy.parent_session_id,
+                    {}
+                  );
+                }
+              }
+            } catch (error) {
+              // Don't throw - parent issues shouldn't break child queue processing
+              console.warn(
+                `⚠️  [TasksService] Failed to trigger parent queue processing (parent may be deleted):`,
+                error
+              );
+            }
           }
 
           // IMPORTANT: Now that session is idle, process any queued messages (including callbacks)
