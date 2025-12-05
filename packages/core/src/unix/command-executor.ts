@@ -99,7 +99,10 @@ export class DirectExecutor implements CommandExecutor {
  */
 export class SudoDirectExecutor implements CommandExecutor {
   async exec(command: string): Promise<CommandResult> {
-    const sudoCommand = `sudo ${command}`;
+    // CRITICAL: Use -n (non-interactive) to prevent sudo from blocking on password prompt
+    // Without -n, sudo opens /dev/tty and blocks forever if password required,
+    // which can freeze the entire Node.js event loop and even affect system TTY resources
+    const sudoCommand = `sudo -n ${command}`;
     console.log(`[SudoDirectExecutor] Executing: ${sudoCommand}`);
     try {
       const { stdout, stderr } = await execAsync(sudoCommand);
@@ -116,7 +119,8 @@ export class SudoDirectExecutor implements CommandExecutor {
   }
 
   execSync(command: string): string {
-    const sudoCommand = `sudo ${command}`;
+    // CRITICAL: Use -n (non-interactive) - see async exec() comment for details
+    const sudoCommand = `sudo -n ${command}`;
     console.log(`[SudoDirectExecutor] Executing (sync): ${sudoCommand}`);
     return execSync(sudoCommand, { encoding: 'utf-8' });
   }
