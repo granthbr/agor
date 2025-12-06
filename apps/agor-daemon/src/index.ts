@@ -165,9 +165,6 @@ interface RouteParams extends Params {
   user?: User;
 }
 
-// Expand ~ to home directory in database path
-import { extractDbFilePath } from '@agor/core/utils/path';
-
 // Determine database URL using centralized logic from @agor/core/db
 // Priority:
 // 1. If AGOR_DB_DIALECT=postgresql, use DATABASE_URL (required for Postgres)
