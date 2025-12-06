@@ -3213,31 +3213,69 @@ async function main() {
    * NOTE: params argument may be empty when called from callback-triggered queue processing.
    * We reconstruct the original user's authentication context from message metadata.
    *
-   * IMPORTANT: Uses in-memory lock to prevent concurrent processing of the same session's queue,
-   * which would cause duplicate callback execution in race conditions.
+   * IMPORTANT: Uses promise-based lock to prevent concurrent processing of the same session's queue.
+   * Concurrent callers WAIT for the current processing to complete rather than skipping, which
+   * ensures we don't miss queued messages due to race conditions.
+   *
+   * SELF-HEALING: After each message is processed, we check for more queued messages.
+   * This ensures callbacks queued during processing are not missed.
    */
-  // In-memory lock to prevent concurrent queue processing for the same session
-  const queueProcessingLocks = new Set<SessionID>();
+  // Promise-based lock: maps session ID to the active processing promise
+  // We store the actual processing promise (with .catch() to prevent unhandled rejection)
+  // Concurrent callers wait on this promise then retry, ensuring no messages are missed
+  const queueProcessingLocks = new Map<SessionID, Promise<void>>();
+
+  // Track if a retry is already scheduled for a session (to avoid duplicate retries)
+  const queueRetryScheduled = new Set<SessionID>();
 
   async function processNextQueuedMessage(
     sessionId: SessionID,
     params: RouteParams
   ): Promise<void> {
     // Check if already processing queue for this session
-    if (queueProcessingLocks.has(sessionId)) {
+    const existingLock = queueProcessingLocks.get(sessionId);
+    if (existingLock) {
       console.log(
-        `⏭️  [Queue] Already processing queue for session ${sessionId.substring(0, 8)}, skipping duplicate call`
+        `⏳ [Queue] Processing in progress for session ${sessionId.substring(0, 8)}, waiting...`
       );
+      // Wait for current processing to complete (errors are already handled by the lock)
+      await existingLock;
+      // After waiting, schedule a retry (if not already scheduled)
+      // Use setImmediate to avoid deep recursion and allow other events to process
+      if (!queueRetryScheduled.has(sessionId)) {
+        queueRetryScheduled.add(sessionId);
+        setImmediate(async () => {
+          queueRetryScheduled.delete(sessionId);
+          try {
+            await processNextQueuedMessage(sessionId, params);
+          } catch (error) {
+            console.error(
+              `❌ [Queue] Retry failed for session ${sessionId.substring(0, 8)}:`,
+              error
+            );
+          }
+        });
+      }
       return;
     }
 
-    // Acquire lock
-    queueProcessingLocks.add(sessionId);
+    // Create the processing promise and store it as the lock
+    // CRITICAL: We attach .catch() to prevent unhandled rejection when no one is waiting
+    // The actual error is still thrown to the original caller via the unwrapped promise
+    const processingPromise = processNextQueuedMessageInternal(sessionId, params);
+
+    // Store with .catch() so if no one is awaiting, Node won't crash on rejection
+    queueProcessingLocks.set(
+      sessionId,
+      processingPromise.catch(() => {
+        // Swallow error for waiters - they'll retry anyway
+      })
+    );
 
     try {
-      await processNextQueuedMessageInternal(sessionId, params);
+      await processingPromise;
     } finally {
-      // Always release lock, even if processing fails
+      // Release lock
       queueProcessingLocks.delete(sessionId);
     }
   }
@@ -3279,8 +3317,12 @@ async function main() {
     const session = await sessionsService.get(sessionId, messageParams);
 
     if (session.status !== SessionStatus.IDLE) {
+      // Session is not idle, we cannot process the queue now.
+      // The session.patch after-hook will trigger queue processing when session becomes IDLE.
+      // Log this so we can track if messages are waiting.
       console.log(
-        `⚠️  Session ${sessionId.substring(0, 8)} is ${session.status}, skipping queue processing`
+        `⏸️  [Queue] Session ${sessionId.substring(0, 8)} is ${session.status}, message ${nextMessage.message_id.substring(0, 8)} waiting in queue ` +
+          `(will be processed when session becomes IDLE via patch hook)`
       );
       return;
     }
