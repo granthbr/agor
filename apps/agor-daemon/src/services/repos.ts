@@ -331,22 +331,23 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
       userEnv = await resolveUserEnvironment(userId, this.db);
     }
 
-    // Add user to repo group BEFORE creating worktree (for .git access)
+    // Ensure authenticated user is in repo group BEFORE creating worktree
     // This is required because gitCreateWorktree needs to read/write .git/config
-    if (userId) {
-      const unixIntegration = this.app.get('unixIntegration') as UnixIntegrationService | undefined;
-      if (unixIntegration?.isEnabled()) {
-        try {
-          await unixIntegration.addUserToRepoGroup(repo.repo_id, userId);
-          console.log(
-            `[Unix Integration] Added user ${userId.substring(0, 8)} to repo ${repo.repo_id.substring(0, 8)} group (pre-worktree-create)`
-          );
-        } catch (error) {
-          // Fail fast - without repo group access, gitCreateWorktree will fail with "permission denied"
-          throw new Error(
-            `Failed to grant repo access for worktree creation: ${error instanceof Error ? error.message : String(error)}`
-          );
-        }
+    // Note: The daemon user is already added to the repo group when it's created (see createRepoGroup)
+    // and by sync-unix for existing repos. Authenticated users need to be added dynamically.
+    const unixIntegration = this.app.get('unixIntegration') as UnixIntegrationService | undefined;
+    if (unixIntegration?.isEnabled() && userId) {
+      try {
+        // Add authenticated user to repo group (for their own file access)
+        await unixIntegration.addUserToRepoGroup(repo.repo_id, userId);
+        console.log(
+          `[Unix Integration] Added user ${userId.substring(0, 8)} to repo ${repo.repo_id.substring(0, 8)} group (pre-worktree-create)`
+        );
+      } catch (error) {
+        // Fail fast - without repo group access, gitCreateWorktree will fail with "permission denied"
+        throw new Error(
+          `Failed to grant repo access for worktree creation: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     }
 

@@ -13,6 +13,7 @@
  * @see context/guides/rbac-and-unix-isolation.md
  */
 
+import { userInfo } from 'node:os';
 import type { Database } from '../db/index.js';
 import { RepoRepository, UsersRepository, WorktreeRepository } from '../db/repositories/index.js';
 import type { RepoID, UserID, UUID, WorktreeID } from '../types/index.js';
@@ -66,6 +67,10 @@ export interface UnixIntegrationConfig {
 
   /** Whether to auto-create symlinks when ownership changes (default: true when enabled) */
   autoManageSymlinks?: boolean;
+
+  /** Unix user the daemon runs as. Added to all Unix groups to ensure daemon has access.
+   * If not set, falls back to os.userInfo().username at runtime. */
+  daemonUser?: string;
 }
 
 /**
@@ -83,7 +88,7 @@ export interface UnixOperationResult {
  * Orchestrates all Unix-level operations for Agor RBAC.
  */
 export class UnixIntegrationService {
-  private config: Required<UnixIntegrationConfig>;
+  private config: Required<Omit<UnixIntegrationConfig, 'daemonUser'>> & { daemonUser?: string };
   private executor: CommandExecutor;
   private worktreeRepo: WorktreeRepository;
   private usersRepo: UsersRepository;
@@ -94,16 +99,38 @@ export class UnixIntegrationService {
     executor: CommandExecutor,
     config: UnixIntegrationConfig = { enabled: false }
   ) {
+    // Get daemon user from config, or fall back to current process user
+    let daemonUser = config.daemonUser;
+    if (!daemonUser) {
+      try {
+        daemonUser = userInfo().username;
+      } catch {
+        // userInfo() can fail in some environments (e.g., no passwd entry)
+        daemonUser = undefined;
+      }
+    }
+
     this.config = {
       enabled: config.enabled,
       homeBase: config.homeBase || AGOR_HOME_BASE,
       autoCreateUnixUsers: config.autoCreateUnixUsers ?? false,
       autoManageSymlinks: config.autoManageSymlinks ?? config.enabled,
+      daemonUser,
     };
     this.executor = config.enabled ? executor : new NoOpExecutor();
     this.worktreeRepo = new WorktreeRepository(db);
     this.usersRepo = new UsersRepository(db);
     this.repoRepo = new RepoRepository(db);
+  }
+
+  /**
+   * Get the configured daemon user
+   *
+   * Returns the Unix user that runs the daemon process.
+   * Used to ensure daemon has access to all Unix groups.
+   */
+  getDaemonUser(): string | undefined {
+    return this.config.daemonUser;
   }
 
   /**
@@ -214,7 +241,36 @@ export class UnixIntegrationService {
       await this.setWorktreePermissions(worktreeId, worktree.path);
     }
 
+    // Add the daemon user to the worktree group so it can access the worktree
+    if (this.config.daemonUser) {
+      await this.addUnixUserToWorktreeGroup(groupName, this.config.daemonUser);
+    }
+
     return groupName;
+  }
+
+  /**
+   * Add a Unix username directly to a worktree group
+   *
+   * Used for adding the daemon user or other system users.
+   *
+   * @param groupName - Unix group name
+   * @param unixUsername - Unix username to add
+   */
+  async addUnixUserToWorktreeGroup(groupName: string, unixUsername: string): Promise<void> {
+    console.log(
+      `[UnixIntegration] Adding Unix user ${unixUsername} to worktree group ${groupName}`
+    );
+
+    // Check if already in group
+    const inGroup = await this.executor.check(
+      UnixGroupCommands.isUserInGroup(unixUsername, groupName)
+    );
+    if (inGroup) {
+      console.log(`[UnixIntegration] User ${unixUsername} already in worktree group ${groupName}`);
+    } else {
+      await this.executor.exec(UnixGroupCommands.addUserToGroup(unixUsername, groupName));
+    }
   }
 
   /**
@@ -414,7 +470,35 @@ export class UnixIntegrationService {
       await this.setRepoGitPermissions(repoId, repo.local_path);
     }
 
+    // Add the daemon user to the repo group so it can run git commands
+    // The daemon needs access to .git for worktree creation, fetching, etc.
+    if (this.config.daemonUser) {
+      await this.addUnixUserToRepoGroup(groupName, this.config.daemonUser);
+    }
+
     return groupName;
+  }
+
+  /**
+   * Add a Unix username directly to a repo group
+   *
+   * Used for adding the daemon user or other system users.
+   *
+   * @param groupName - Unix group name
+   * @param unixUsername - Unix username to add
+   */
+  async addUnixUserToRepoGroup(groupName: string, unixUsername: string): Promise<void> {
+    console.log(`[UnixIntegration] Adding Unix user ${unixUsername} to repo group ${groupName}`);
+
+    // Check if already in group
+    const inGroup = await this.executor.check(
+      UnixGroupCommands.isUserInGroup(unixUsername, groupName)
+    );
+    if (inGroup) {
+      console.log(`[UnixIntegration] User ${unixUsername} already in repo group ${groupName}`);
+    } else {
+      await this.executor.exec(UnixGroupCommands.addUserToGroup(unixUsername, groupName));
+    }
   }
 
   /**
