@@ -900,9 +900,27 @@ async function main() {
     },
   });
 
-  // Discover MCP server capabilities endpoint
+  // Discover/Test MCP server capabilities endpoint
+  // Accepts either:
+  // - mcp_server_id: Test saved server config and persist discovered capabilities
+  // - Inline config (url, transport, auth): Test connection without saving (for form validation)
   app.use('/mcp-servers/discover', {
-    async create(data: { mcp_server_id: string }, params?: AuthenticatedParams) {
+    async create(
+      data: {
+        mcp_server_id?: string;
+        // Inline config for testing unsaved configurations
+        url?: string;
+        transport?: 'http' | 'sse';
+        auth?: {
+          type: 'none' | 'bearer' | 'jwt';
+          token?: string;
+          api_url?: string;
+          api_token?: string;
+          api_secret?: string;
+        };
+      },
+      params?: AuthenticatedParams
+    ) {
       try {
         const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
         const { StreamableHTTPClientTransport } = await import(
@@ -911,60 +929,185 @@ async function main() {
         const { resolveMCPAuthHeaders } = await import('@agor/core/tools/mcp/jwt-auth');
 
         const mcpServerRepo = new MCPServerRepository(db);
-        const server = await mcpServerRepo.findById(data.mcp_server_id);
 
-        if (!server) {
-          return { success: false, error: 'MCP server not found' };
-        }
+        // SSRF Protection: Validate URLs to prevent internal network access
+        const validateUrl = (url: string): { valid: boolean; error?: string } => {
+          try {
+            const parsed = new URL(url);
+            const hostname = parsed.hostname.toLowerCase();
 
-        // SECURITY: Verify user has access to this MCP server
-        // Skip authorization for internal calls (params.provider is falsy)
-        if (params?.provider && params.user) {
-          const userId = params.user.user_id;
+            // Block localhost and loopback
+            if (
+              hostname === 'localhost' ||
+              hostname === '127.0.0.1' ||
+              hostname === '::1' ||
+              hostname === '0.0.0.0'
+            ) {
+              return { valid: false, error: 'Connection to localhost is not allowed' };
+            }
 
-          // For global servers, only the owner can discover them
-          // For session-scoped servers, admins can discover them (sessions service already checks ownership)
-          if (server.scope === 'global' && server.owner_user_id !== userId) {
-            return {
-              success: false,
-              error: 'Access denied: only server owner can discover this MCP server',
-            };
+            // Block private IP ranges (10.x.x.x, 172.16-31.x.x, 192.168.x.x)
+            const ipv4Match = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+            if (ipv4Match) {
+              const [, a, b] = ipv4Match.map(Number);
+              if (
+                a === 10 ||
+                (a === 172 && b >= 16 && b <= 31) ||
+                (a === 192 && b === 168) ||
+                a === 169 // link-local
+              ) {
+                return { valid: false, error: 'Connection to private IP addresses is not allowed' };
+              }
+            }
+
+            // Block common internal hostnames
+            if (
+              hostname.endsWith('.local') ||
+              hostname.endsWith('.internal') ||
+              hostname.endsWith('.lan')
+            ) {
+              return { valid: false, error: 'Connection to internal hostnames is not allowed' };
+            }
+
+            // Only allow http/https
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+              return { valid: false, error: 'Only HTTP and HTTPS protocols are allowed' };
+            }
+
+            return { valid: true };
+          } catch {
+            return { valid: false, error: 'Invalid URL format' };
+          }
+        };
+
+        // Determine if inline config is provided (form values take precedence for testing)
+        const hasInlineConfig = !!data.url;
+        let serverConfig: {
+          url: string;
+          transport: 'http' | 'sse' | 'stdio';
+          auth?: typeof data.auth;
+          name?: string;
+          scope?: string;
+          owner_user_id?: string;
+        };
+        let serverId: string | undefined;
+
+        if (hasInlineConfig) {
+          // Inline config provided - use form values for testing
+          // This allows testing unsaved changes in edit mode
+          const urlValidation = validateUrl(data.url!);
+          if (!urlValidation.valid) {
+            return { success: false, error: urlValidation.error };
           }
 
-          // For session-scoped servers, require admin role since discovery is a privileged operation
-          // that reveals server capabilities and can trigger outbound connections
-          if (server.scope === 'session') {
-            const userRole = params.user.role?.toLowerCase();
-            if (userRole !== 'admin' && userRole !== 'owner') {
+          serverConfig = {
+            url: data.url!,
+            transport: data.transport || 'http',
+            auth: data.auth,
+            name: 'inline-test',
+          };
+
+          // If mcp_server_id is also provided, we'll persist capabilities after successful test
+          // but still test using the inline config (form values)
+          if (data.mcp_server_id) {
+            // Verify user has access to this server before allowing capability persistence
+            const server = await mcpServerRepo.findById(data.mcp_server_id);
+            if (!server) {
+              return { success: false, error: 'MCP server not found' };
+            }
+
+            // SECURITY: Verify user has access to persist to this MCP server
+            if (params?.provider && params.user) {
+              const userId = params.user.user_id;
+              if (server.scope === 'global' && server.owner_user_id !== userId) {
+                return {
+                  success: false,
+                  error: 'Access denied: only server owner can update this MCP server',
+                };
+              }
+              if (server.scope === 'session') {
+                const userRole = params.user.role?.toLowerCase();
+                if (userRole !== 'admin' && userRole !== 'owner') {
+                  return {
+                    success: false,
+                    error:
+                      'Access denied: admin role required to update session-scoped MCP servers',
+                  };
+                }
+              }
+            }
+            serverId = data.mcp_server_id;
+          }
+        } else if (data.mcp_server_id) {
+          // No inline config - use saved server config
+          const server = await mcpServerRepo.findById(data.mcp_server_id);
+
+          if (!server) {
+            return { success: false, error: 'MCP server not found' };
+          }
+
+          // SECURITY: Verify user has access to this MCP server
+          // Skip authorization for internal calls (params.provider is falsy)
+          if (params?.provider && params.user) {
+            const userId = params.user.user_id;
+
+            // For global servers, only the owner can discover them
+            if (server.scope === 'global' && server.owner_user_id !== userId) {
               return {
                 success: false,
-                error: 'Access denied: admin role required to discover session-scoped MCP servers',
+                error: 'Access denied: only server owner can discover this MCP server',
               };
             }
+
+            // For session-scoped servers, require admin role
+            if (server.scope === 'session') {
+              const userRole = params.user.role?.toLowerCase();
+              if (userRole !== 'admin' && userRole !== 'owner') {
+                return {
+                  success: false,
+                  error:
+                    'Access denied: admin role required to discover session-scoped MCP servers',
+                };
+              }
+            }
           }
+
+          // Validate the saved URL too
+          if (server.url) {
+            const urlValidation = validateUrl(server.url);
+            if (!urlValidation.valid) {
+              return { success: false, error: urlValidation.error };
+            }
+          }
+
+          serverConfig = {
+            url: server.url || '',
+            transport: (server.transport as 'http' | 'sse') || (server.url ? 'http' : 'stdio'),
+            auth: server.auth,
+            name: server.name,
+            scope: server.scope,
+            owner_user_id: server.owner_user_id,
+          };
+          serverId = data.mcp_server_id;
+        } else {
+          return { success: false, error: 'Either mcp_server_id or url is required' };
         }
 
-        // Infer transport from URL if not set (backwards compatibility)
-        const transport = server.transport || (server.url ? 'http' : 'stdio');
-
         // Only support HTTP/SSE (stdio requires process spawning)
-        if (transport === 'stdio') {
+        if (serverConfig.transport === 'stdio' || !serverConfig.url) {
           return {
             success: false,
-            error: `Tool discovery not supported for stdio servers (requires active session)`,
+            error: `Connection test not supported for stdio servers (requires active session)`,
           };
         }
 
-        if (!server.url) {
-          return { success: false, error: 'Server URL not configured' };
-        }
-
-        console.log('[MCP Discovery] Starting discovery for:', server.name || server.mcp_server_id);
-        console.log('[MCP Discovery] URL:', server.url);
-        console.log('[MCP Discovery] Transport:', transport);
+        console.log('[MCP Discovery] Starting test for:', serverConfig.name || 'inline-config');
+        console.log('[MCP Discovery] URL:', serverConfig.url);
+        console.log('[MCP Discovery] Transport:', serverConfig.transport);
+        console.log('[MCP Discovery] Mode:', hasInlineConfig ? 'inline-test' : 'saved-server');
 
         // Get auth headers
-        const authHeaders = await resolveMCPAuthHeaders(server.auth);
+        const authHeaders = await resolveMCPAuthHeaders(serverConfig.auth);
         console.log('[MCP Discovery] Auth headers present:', !!authHeaders);
         if (authHeaders) {
           console.log('[MCP Discovery] Auth headers keys:', Object.keys(authHeaders));
@@ -979,7 +1122,7 @@ async function main() {
         }
 
         // Create Streamable HTTP transport (supports both SSE and regular HTTP)
-        const httpTransport = new StreamableHTTPClientTransport(new URL(server.url), {
+        const httpTransport = new StreamableHTTPClientTransport(new URL(serverConfig.url), {
           requestInit: {
             headers,
           },
@@ -1000,7 +1143,7 @@ async function main() {
 
         try {
           console.log('[MCP Discovery] Connecting to HTTP endpoint...');
-          console.log('[MCP Discovery] URL:', server.url);
+          console.log('[MCP Discovery] URL:', serverConfig.url);
           console.log('[MCP Discovery] Headers:', JSON.stringify(headers, null, 2));
 
           // Add timeout to prevent hanging indefinitely (10s should be plenty)
@@ -1090,28 +1233,30 @@ async function main() {
           ])) as PromptsResult;
           console.log('[MCP Discovery] ✅ Found', promptsResult.prompts.length, 'prompts');
 
-          // Update server with discovered capabilities
-          await mcpServerRepo.update(data.mcp_server_id, {
-            tools: toolsResult.tools.map((t) => ({
-              name: t.name,
-              description: t.description || '',
-              input_schema: t.inputSchema,
-            })),
-            resources: resourcesResult.resources.map((r) => ({
-              uri: r.uri,
-              name: r.name,
-              mimeType: r.mimeType,
-            })),
-            prompts: promptsResult.prompts.map((p) => ({
-              name: p.name,
-              description: p.description || '',
-              arguments: p.arguments?.map((a) => ({
-                name: a.name,
-                description: a.description || '',
-                required: a.required,
+          // Only persist capabilities if testing a saved server (not inline test)
+          if (serverId) {
+            await mcpServerRepo.update(serverId, {
+              tools: toolsResult.tools.map((t) => ({
+                name: t.name,
+                description: t.description || '',
+                input_schema: t.inputSchema,
               })),
-            })),
-          });
+              resources: resourcesResult.resources.map((r) => ({
+                uri: r.uri,
+                name: r.name,
+                mimeType: r.mimeType,
+              })),
+              prompts: promptsResult.prompts.map((p) => ({
+                name: p.name,
+                description: p.description || '',
+                arguments: p.arguments?.map((a) => ({
+                  name: a.name,
+                  description: a.description || '',
+                  required: a.required,
+                })),
+              })),
+            });
+          }
 
           return {
             success: true,
@@ -1120,6 +1265,20 @@ async function main() {
               resources: resourcesResult.resources.length,
               prompts: promptsResult.prompts.length,
             },
+            // Include tool/resource names for inline display
+            tools: toolsResult.tools.map((t) => ({
+              name: t.name,
+              description: t.description || '',
+            })),
+            resources: resourcesResult.resources.map((r) => ({
+              name: r.name,
+              uri: r.uri,
+              mimeType: r.mimeType,
+            })),
+            prompts: promptsResult.prompts.map((p) => ({
+              name: p.name,
+              description: p.description || '',
+            })),
           };
         } finally {
           // Always close connection if it was established
