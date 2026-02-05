@@ -1,6 +1,7 @@
 import type { ActiveUser, Board, BoardID, User, Worktree } from '@agor/core/types';
 import {
   ApiOutlined,
+  BookOutlined,
   CommentOutlined,
   LogoutOutlined,
   QuestionCircleOutlined,
@@ -43,6 +44,7 @@ export interface AppHeaderProps {
   onCommentsClick?: () => void;
   onEventStreamClick?: () => void;
   onSettingsClick?: () => void;
+  onLibraryClick?: () => void;
   onUserSettingsClick?: () => void;
   onThemeEditorClick?: () => void;
   onLogout?: () => void;
@@ -85,6 +87,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   onCommentsClick,
   onEventStreamClick,
   onSettingsClick,
+  onLibraryClick,
   onUserSettingsClick,
   onThemeEditorClick,
   onLogout,
@@ -267,6 +270,13 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
             <Divider type="vertical" style={{ height: 32, margin: '0 8px' }} />
           </>
         )}
+        <Tooltip title="Prompt Library" placement="bottom">
+          <Button
+            type="text"
+            icon={<BookOutlined style={{ fontSize: token.fontSizeLG }} />}
+            onClick={onLibraryClick}
+          />
+        </Tooltip>
         {eventStreamEnabled && (
           <Tooltip title="Live Event Stream" placement="bottom">
             <Button

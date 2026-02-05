@@ -19,6 +19,7 @@ import {
 } from '../AgentSelectionGrid/AgentSelectionGrid';
 import { AutocompleteTextarea } from '../AutocompleteTextarea';
 import type { ModelConfig } from '../ModelSelector';
+import { PromptArchitectButton } from '../PromptArchitect';
 
 export interface NewSessionConfig {
   worktree_id: string; // Required - sessions are always created from a worktree
@@ -219,7 +220,23 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
         {/* Initial Prompt */}
         <Form.Item
           name="initialPrompt"
-          label="Initial Prompt (optional)"
+          label={
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                width: '100%',
+              }}
+            >
+              <span>Initial Prompt (optional)</span>
+              <PromptArchitectButton
+                target="session"
+                client={client}
+                onComplete={(result) => form.setFieldValue('initialPrompt', result.template)}
+              />
+            </div>
+          }
           help="First message to send to the agent when session starts"
         >
           <AutocompleteTextarea

@@ -8,6 +8,8 @@ export * from './board-objects';
 export * from './boards';
 export * from './mcp-servers';
 export * from './messages';
+export * from './prompt-ratings';
+export * from './prompt-templates';
 export * from './repos';
 export * from './session-mcp-servers';
 export * from './sessions';

@@ -11,6 +11,7 @@ export * from './id';
 export * from './mcp';
 export * from './message';
 export * from './presence';
+export * from './prompt-template';
 export * from './repo';
 export * from './report';
 export type { ClaudeCodePermissionMode, CodexPermissionMode, PermissionMode } from './session';

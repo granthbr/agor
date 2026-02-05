@@ -2,9 +2,11 @@
  * Modal for configuring zone settings (name, triggers, etc.)
  */
 
+import type { AgorClient } from '@agor/core/api';
 import type { BoardObject, ZoneTriggerBehavior } from '@agor/core/types';
 import { Alert, Input, Modal, Select, theme } from 'antd';
 import { useEffect, useId, useRef, useState } from 'react';
+import { PromptArchitectButton } from '../../PromptArchitect';
 
 interface ZoneConfigModalProps {
   open: boolean;
@@ -13,6 +15,7 @@ interface ZoneConfigModalProps {
   objectId: string;
   onUpdate: (objectId: string, objectData: BoardObject) => void;
   zoneData: BoardObject;
+  client?: AgorClient | null;
 }
 
 export const ZoneConfigModal = ({
@@ -22,6 +25,7 @@ export const ZoneConfigModal = ({
   objectId,
   onUpdate,
   zoneData,
+  client,
 }: ZoneConfigModalProps) => {
   const { token } = theme.useToken();
   const [name, setName] = useState(zoneName);
@@ -135,17 +139,31 @@ export const ZoneConfigModal = ({
       </div>
 
       <div>
-        <label
-          htmlFor={triggerTemplateId}
+        <div
           style={{
-            display: 'block',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
             marginBottom: 8,
-            fontWeight: 500,
-            color: token.colorText,
           }}
         >
-          Trigger Template
-        </label>
+          <label
+            htmlFor={triggerTemplateId}
+            style={{
+              fontWeight: 500,
+              color: token.colorText,
+            }}
+          >
+            Trigger Template
+          </label>
+          {client && (
+            <PromptArchitectButton
+              target="zone"
+              client={client}
+              onComplete={(result) => setTriggerTemplate(result.template)}
+            />
+          )}
+        </div>
         <Input.TextArea
           id={triggerTemplateId}
           value={triggerTemplate}

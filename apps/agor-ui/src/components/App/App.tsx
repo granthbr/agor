@@ -42,6 +42,7 @@ import { EventStreamPanel } from '../EventStreamPanel';
 import { NewSessionButton } from '../NewSessionButton';
 import { type NewSessionConfig, NewSessionModal } from '../NewSessionModal';
 import { type NewWorktreeConfig, NewWorktreeModal } from '../NewWorktreeModal';
+import { PromptLibraryPanel } from '../PromptLibrary';
 import { SessionCanvas, type SessionCanvasRef } from '../SessionCanvas';
 import { SessionPanel } from '../SessionPanel';
 import { SessionSettingsModal } from '../SessionSettingsModal';
@@ -205,6 +206,7 @@ export const App: React.FC<AppProps> = ({
   } | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [listDrawerOpen, setListDrawerOpen] = useState(false);
+  const [libraryPanelOpen, setLibraryPanelOpen] = useState(false);
   const [userSettingsOpen, setUserSettingsOpen] = useState(false);
 
   // Settings modal state via URL routing
@@ -591,6 +593,7 @@ export const App: React.FC<AppProps> = ({
               }
             }}
             onSettingsClick={() => openSettings()}
+            onLibraryClick={() => setLibraryPanelOpen(true)}
             onUserSettingsClick={() => setUserSettingsOpen(true)}
             onThemeEditorClick={() => setThemeEditorOpen(true)}
             onLogout={onLogout}
@@ -950,6 +953,12 @@ export const App: React.FC<AppProps> = ({
             sessionsByWorktree={sessionsByWorktree}
             worktreeById={worktreeById}
             onSessionClick={setSelectedSessionId}
+          />
+          <PromptLibraryPanel
+            open={libraryPanelOpen}
+            onClose={() => setLibraryPanelOpen(false)}
+            client={client}
+            boardId={currentBoardId ?? undefined}
           />
           <TerminalModal
             open={terminalOpen}

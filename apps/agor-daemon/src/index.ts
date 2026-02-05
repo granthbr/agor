@@ -322,6 +322,9 @@ import { createHealthMonitor } from './services/health-monitor';
 import { createLeaderboardService } from './services/leaderboard';
 import { createMCPServersService } from './services/mcp-servers';
 import { createMessagesService } from './services/messages';
+import { createPromptArchitectService } from './services/prompt-architect';
+import { createPromptRatingsService } from './services/prompt-ratings';
+import { createPromptTemplatesService } from './services/prompt-templates';
 import { createReposService } from './services/repos';
 import { SchedulerService } from './services/scheduler';
 import { createSessionMCPServersService } from './services/session-mcp-servers';
@@ -997,6 +1000,11 @@ async function main() {
 
   // Register board-comments service (human-to-human conversations)
   app.use('/board-comments', createBoardCommentsService(db));
+
+  // Register Prompt Architect services
+  app.use('/prompt-architect', createPromptArchitectService());
+  app.use('/prompt-templates', createPromptTemplatesService(db));
+  app.use('/prompt-ratings', createPromptRatingsService(db));
 
   // Register worktrees service first (repos service needs to access it)
   // NOTE: Pass app instance for environment management (needs to access repos service)

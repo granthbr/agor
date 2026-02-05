@@ -282,6 +282,58 @@ execution:
 
 ---
 
+## Prompt Architect Feature
+
+AI-powered prompt generation and library system. Generates well-structured prompts for zones, sessions, and scheduler configurations.
+
+### Architecture
+
+```
+packages/core/src/
+├── types/prompt-template.ts       # All types (PromptTemplate, versions, ratings, architect I/O)
+├── prompts/architect.ts           # System prompts + buildArchitectMessages helpers
+└── db/
+    ├── schema.sqlite.ts           # 3 tables: prompt_templates, prompt_template_versions, prompt_ratings
+    ├── schema.postgres.ts         # Mirror of above for Postgres
+    ├── schema.ts                  # Re-exports
+    └── repositories/
+        ├── prompt-templates.ts    # CRUD + versioning + usage tracking
+        └── prompt-ratings.ts      # CRUD + avg calculation
+
+apps/agor-daemon/src/services/
+├── prompt-architect.ts            # AI generation (clarify/generate via @anthropic-ai/sdk)
+├── prompt-templates.ts            # CRUD + auto-versioning + quality scoring
+└── prompt-ratings.ts              # CRUD + auto avg_rating recalculation
+
+apps/agor-ui/src/components/
+├── PromptArchitect/               # Modal (Describe→Clarify→Review) + trigger button
+├── PromptLibrary/                 # Drawer panel, TemplateCard, search, version history
+└── PromptRating/                  # Inline rating widget for sessions
+```
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/prompt-architect` | POST | `{ action: 'clarify'\|'generate', description, target }` |
+| `/prompt-templates` | CRUD | Templates with auto-versioning on patch |
+| `/prompt-ratings` | CRUD | Ratings (recalculates template avg_rating) |
+
+### UI Integration Points
+
+- **ZoneConfigModal** — "Architect" button next to Trigger Template (target: zone)
+- **NewSessionModal** — "Architect" button in Initial Prompt label (target: session)
+- **AppHeader** — Library book icon button → opens PromptLibraryPanel drawer
+- **App.tsx** — `libraryPanelOpen` state manages the drawer
+
+### Quality Scoring
+
+Templates sorted by: `score = (avg_rating × 0.6) + (log2(usage_count + 1) × 0.3) + (recency × 0.1)`
+
+Sort options: Best (default), Most Used, Newest, Top Rated
+
+---
+
 ## Extended Thinking Mode
 
 Auto-detects keywords in prompts:

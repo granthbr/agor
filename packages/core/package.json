@@ -164,6 +164,11 @@
       "types": "./dist/mcp/index.d.ts",
       "import": "./dist/mcp/index.js",
       "require": "./dist/mcp/index.cjs"
+    },
+    "./prompts/architect": {
+      "types": "./dist/prompts/architect.d.ts",
+      "import": "./dist/prompts/architect.js",
+      "require": "./dist/prompts/architect.cjs"
     }
   },
   "scripts": {

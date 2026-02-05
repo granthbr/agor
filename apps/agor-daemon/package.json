@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@agor/core": "workspace:*",
+    "@anthropic-ai/sdk": "^0.72.1",
     "@modelcontextprotocol/sdk": "^1.25.2",
     "compression": "^1.8.1",
     "cors": "^2.8.5",

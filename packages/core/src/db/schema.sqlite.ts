@@ -910,6 +910,91 @@ export const boardComments = sqliteTable(
 );
 
 /**
+ * Prompt Templates table - Versioned prompt templates for the Prompt Architect
+ */
+export const promptTemplates = sqliteTable(
+  'prompt_templates',
+  {
+    template_id: text('template_id', { length: 36 }).primaryKey(),
+    board_id: text('board_id', { length: 36 }).references(() => boards.board_id, {
+      onDelete: 'set null',
+    }),
+    created_by: text('created_by', { length: 36 }).notNull().default('anonymous'),
+    title: text('title').notNull(),
+    description: text('description'),
+    category: text('category', {
+      enum: ['session', 'zone', 'scheduler', 'generic'],
+    }).notNull(),
+    template: text('template').notNull(),
+    variables: text('variables'), // JSON string array
+    metadata: text('metadata'), // JSON string
+    version: integer('version').notNull().default(1),
+    parent_id: text('parent_id', { length: 36 }), // Self-reference for forks
+    is_latest: t.bool('is_latest').notNull().default(true),
+    usage_count: integer('usage_count').notNull().default(0),
+    avg_rating: integer('avg_rating').notNull().default(0), // Stored as integer * 10 for SQLite
+    created_at: t.timestamp('created_at').notNull(),
+    updated_at: t.timestamp('updated_at').notNull(),
+  },
+  (table) => ({
+    boardIdx: index('prompt_templates_board_idx').on(table.board_id),
+    categoryIdx: index('prompt_templates_category_idx').on(table.category),
+    createdByIdx: index('prompt_templates_created_by_idx').on(table.created_by),
+    parentIdx: index('prompt_templates_parent_idx').on(table.parent_id),
+    isLatestIdx: index('prompt_templates_is_latest_idx').on(table.is_latest),
+    createdIdx: index('prompt_templates_created_idx').on(table.created_at),
+  })
+);
+
+/**
+ * Prompt Template Versions table - Version history for templates
+ */
+export const promptTemplateVersions = sqliteTable(
+  'prompt_template_versions',
+  {
+    version_id: text('version_id', { length: 36 }).primaryKey(),
+    template_id: text('template_id', { length: 36 })
+      .notNull()
+      .references(() => promptTemplates.template_id, { onDelete: 'cascade' }),
+    version: integer('version').notNull(),
+    template: text('template').notNull(),
+    variables: text('variables'), // JSON string array
+    change_note: text('change_note'),
+    created_by: text('created_by', { length: 36 }).notNull().default('anonymous'),
+    created_at: t.timestamp('created_at').notNull(),
+  },
+  (table) => ({
+    templateIdx: index('prompt_template_versions_template_idx').on(table.template_id),
+    versionIdx: index('prompt_template_versions_version_idx').on(table.template_id, table.version),
+  })
+);
+
+/**
+ * Prompt Ratings table - Quality feedback for templates
+ */
+export const promptRatings = sqliteTable(
+  'prompt_ratings',
+  {
+    rating_id: text('rating_id', { length: 36 }).primaryKey(),
+    template_id: text('template_id', { length: 36 })
+      .notNull()
+      .references(() => promptTemplates.template_id, { onDelete: 'cascade' }),
+    session_id: text('session_id', { length: 36 }).references(() => sessions.session_id, {
+      onDelete: 'set null',
+    }),
+    rated_by: text('rated_by', { length: 36 }).notNull().default('anonymous'),
+    rating: integer('rating').notNull(), // 1-5
+    feedback: text('feedback'),
+    created_at: t.timestamp('created_at').notNull(),
+  },
+  (table) => ({
+    templateIdx: index('prompt_ratings_template_idx').on(table.template_id),
+    sessionIdx: index('prompt_ratings_session_idx').on(table.session_id),
+    ratedByIdx: index('prompt_ratings_rated_by_idx').on(table.rated_by),
+  })
+);
+
+/**
  * Type exports for use with Drizzle ORM
  */
 export type SessionRow = typeof sessions.$inferSelect;
@@ -934,3 +1019,9 @@ export type BoardObjectRow = typeof boardObjects.$inferSelect;
 export type BoardObjectInsert = typeof boardObjects.$inferInsert;
 export type BoardCommentRow = typeof boardComments.$inferSelect;
 export type BoardCommentInsert = typeof boardComments.$inferInsert;
+export type PromptTemplateRow = typeof promptTemplates.$inferSelect;
+export type PromptTemplateInsert = typeof promptTemplates.$inferInsert;
+export type PromptTemplateVersionRow = typeof promptTemplateVersions.$inferSelect;
+export type PromptTemplateVersionInsert = typeof promptTemplateVersions.$inferInsert;
+export type PromptRatingRow = typeof promptRatings.$inferSelect;
+export type PromptRatingInsert = typeof promptRatings.$inferInsert;
