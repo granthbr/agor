@@ -289,7 +289,7 @@ export class SDKMessageProcessor {
   private handleAssistant(msg: SDKAssistantMessage): ProcessedEvent[] {
     this.state.lastAssistantMessageTime = Date.now();
 
-    const contentBlocks = this.processContentBlocks(msg.message?.content);
+    const contentBlocks = this.processContentBlocks((msg.message?.content ?? []) as ContentBlock[]);
     const toolUses = this.extractToolUses(contentBlocks);
 
     return [
@@ -315,18 +315,17 @@ export class SDKMessageProcessor {
       return []; // Skip replays - already in our database
     }
 
-    const content = msg.message?.content;
+    const content = msg.message?.content as ContentBlock[] | undefined;
     const uuid = 'uuid' in msg ? msg.uuid : undefined;
 
     // Check what type of content this user message has
-    const hasToolResult =
-      Array.isArray(content) && content.some((b: ContentBlock) => b.type === 'tool_result');
-    const hasText = Array.isArray(content) && content.some((b: ContentBlock) => b.type === 'text');
+    const hasToolResult = Array.isArray(content) && content.some((b) => b.type === 'tool_result');
+    const hasText = Array.isArray(content) && content.some((b) => b.type === 'text');
 
     if (hasToolResult) {
       // Tool result messages - save to database for conversation continuity
-      const toolResults = content.filter((b: ContentBlock) => b.type === 'tool_result');
-      const errorCount = toolResults.filter((tr: ContentBlock) => tr.is_error).length;
+      const toolResults = content.filter((b) => b.type === 'tool_result');
+      const errorCount = toolResults.filter((tr) => tr.is_error).length;
       const successCount = toolResults.length - errorCount;
       console.log(
         `🔧 SDK user message with ${toolResults.length} tool result(s) (✅ ${successCount}, ❌ ${errorCount})`
@@ -337,7 +336,7 @@ export class SDKMessageProcessor {
         {
           type: 'complete',
           role: MessageRole.USER,
-          content: content as ContentBlock[], // Tool result content
+          content: content, // Tool result content
           toolUses: undefined,
           parent_tool_use_id: msg.parent_tool_use_id || null,
           agentSessionId: this.state.capturedAgentSessionId,
@@ -345,7 +344,7 @@ export class SDKMessageProcessor {
         },
       ];
     } else if (hasText) {
-      const textBlocks = content.filter((b: ContentBlock) => b.type === 'text');
+      const textBlocks = content.filter((b) => b.type === 'text');
       const textPreview = textBlocks[0]?.text?.substring(0, 100) || '';
       console.log(`👤 SDK user message (uuid: ${uuid?.substring(0, 8)}): "${textPreview}"`);
 
@@ -354,7 +353,7 @@ export class SDKMessageProcessor {
         {
           type: 'complete',
           role: MessageRole.USER,
-          content: content as ContentBlock[],
+          content: content,
           toolUses: undefined,
           parent_tool_use_id: msg.parent_tool_use_id || null,
           agentSessionId: this.state.capturedAgentSessionId,
@@ -365,7 +364,7 @@ export class SDKMessageProcessor {
       console.log(`👤 SDK user message (uuid: ${uuid?.substring(0, 8)})`);
       console.log(
         `   Content types:`,
-        Array.isArray(content) ? content.map((b: ContentBlock) => b.type) : 'no content'
+        Array.isArray(content) ? content.map((b) => b.type) : 'no content'
       );
       return []; // Unknown user message type - log only
     }

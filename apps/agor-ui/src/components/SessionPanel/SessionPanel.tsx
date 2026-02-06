@@ -62,6 +62,8 @@ export interface SessionPanelProps {
   sessionMcpServerIds?: string[];
   open: boolean;
   onClose: () => void;
+  pendingPromptInsert?: string | null;
+  onPromptInserted?: () => void;
 }
 
 const SessionPanel: React.FC<SessionPanelProps> = ({
@@ -72,6 +74,8 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
   sessionMcpServerIds = [],
   open,
   onClose,
+  pendingPromptInsert,
+  onPromptInserted,
 }) => {
   const { token } = theme.useToken();
   const { modal, message } = App.useApp();
@@ -113,6 +117,14 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
       prevSessionIdRef.current = session.session_id;
     }
   }, [session, inputValue]);
+
+  // Consume pending prompt insert from library "Use" action
+  React.useEffect(() => {
+    if (pendingPromptInsert) {
+      setInputValue(pendingPromptInsert);
+      onPromptInserted?.();
+    }
+  }, [pendingPromptInsert, onPromptInserted]);
 
   const getDefaultPermissionMode = React.useCallback((agent?: string): PermissionMode => {
     return agent === 'codex' ? 'auto' : 'acceptEdits';

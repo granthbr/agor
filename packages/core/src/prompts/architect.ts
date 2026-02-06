@@ -177,3 +177,32 @@ export function buildArchitectMessages(
     },
   ];
 }
+
+/**
+ * Build a single user prompt string for the clarification step.
+ * Used by the Agent SDK code path which takes one prompt string (not a message array).
+ */
+export function buildClarifyUserPrompt(description: string, target: PromptArchitectTarget): string {
+  return `I want to create a ${target} prompt for the following task:\n\n"${description}"\n\nWhat clarifying questions do you have before generating the prompt?`;
+}
+
+/**
+ * Build a single user prompt string for the generation step.
+ * Used by the Agent SDK code path which takes one prompt string (not a message array).
+ */
+export function buildGenerateUserPrompt(
+  description: string,
+  target: PromptArchitectTarget,
+  clarifications?: Record<string, string>
+): string {
+  let prompt = `Generate a ${target} prompt for the following task:\n\n"${description}"`;
+
+  if (clarifications && Object.keys(clarifications).length > 0) {
+    prompt += '\n\nAdditional context from clarification:';
+    for (const [question, answer] of Object.entries(clarifications)) {
+      prompt += `\nQ: ${question}\nA: ${answer}`;
+    }
+  }
+
+  return prompt;
+}

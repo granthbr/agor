@@ -9,8 +9,8 @@ import type {
   Worktree,
 } from '@agor/core/types';
 import { getDefaultPermissionMode } from '@agor/core/types';
-import { DownOutlined } from '@ant-design/icons';
-import { Alert, Collapse, Form, Input, Modal, Typography } from 'antd';
+import { BookOutlined, DownOutlined } from '@ant-design/icons';
+import { Alert, Button, Collapse, Form, Input, Modal, Space, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import { AgenticToolConfigForm } from '../AgenticToolConfigForm';
 import {
@@ -20,6 +20,7 @@ import {
 import { AutocompleteTextarea } from '../AutocompleteTextarea';
 import type { ModelConfig } from '../ModelSelector';
 import { PromptArchitectButton } from '../PromptArchitect';
+import { PromptLibraryPanel } from '../PromptLibrary';
 
 export interface NewSessionConfig {
   worktree_id: string; // Required - sessions are always created from a worktree
@@ -65,6 +66,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
   const [selectedAgent, setSelectedAgent] = useState<string>('claude-code');
   const [isFormValid, setIsFormValid] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
 
   // Reset form when modal opens, using user defaults if available
   useEffect(() => {
@@ -72,6 +74,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
 
     setSelectedAgent('claude-code');
     setIsCreating(false); // Reset creating state when modal opens
+    setLibraryOpen(false);
 
     // Get default config for the selected agent
     const agentDefaults = currentUser?.default_agentic_config?.['claude-code'];
@@ -230,11 +233,21 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
               }}
             >
               <span>Initial Prompt (optional)</span>
-              <PromptArchitectButton
-                target="session"
-                client={client}
-                onComplete={(result) => form.setFieldValue('initialPrompt', result.template)}
-              />
+              <Space size={4}>
+                <Button
+                  size="small"
+                  type="dashed"
+                  icon={<BookOutlined />}
+                  onClick={() => setLibraryOpen(true)}
+                >
+                  Library
+                </Button>
+                <PromptArchitectButton
+                  target="session"
+                  client={client}
+                  onComplete={(result) => form.setFieldValue('initialPrompt', result.template)}
+                />
+              </Space>
             </div>
           }
           help="First message to send to the agent when session starts"
@@ -270,6 +283,16 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
           style={{ marginTop: 16 }}
         />
       </Form>
+      <PromptLibraryPanel
+        open={libraryOpen}
+        onClose={() => setLibraryOpen(false)}
+        client={client}
+        defaultCategory="session"
+        onUseTemplate={(template) => {
+          form.setFieldValue('initialPrompt', template.template);
+          setLibraryOpen(false);
+        }}
+      />
     </Modal>
   );
 };

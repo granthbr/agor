@@ -61,20 +61,13 @@ done
 echo "✅ @agor/core initial build complete (including type definitions)"
 
 echo "🔨 Building @agor/executor (initial build)..."
-pnpm --filter @agor/executor build
+pnpm --filter @agor/executor build || echo "⚠️  @agor/executor build failed (non-critical), continuing..."
 
-echo "⏳ Waiting for @agor/executor type definitions..."
-MAX_WAIT=30
-WAITED=0
-while [ ! -f "/app/packages/executor/dist/index.d.ts" ]; do
-  if [ $WAITED -ge $MAX_WAIT ]; then
-    echo "❌ Timeout waiting for executor type definitions!"
-    exit 1
-  fi
-  sleep 0.5
-  WAITED=$((WAITED + 1))
-done
-echo "✅ @agor/executor initial build complete (including type definitions)"
+if [ -f "/app/packages/executor/dist/index.d.ts" ]; then
+  echo "✅ @agor/executor initial build complete"
+else
+  echo "⚠️  @agor/executor types not available, skipping wait"
+fi
 
 # Start watch modes for hot-reload
 echo "🔄 Starting watch modes..."
@@ -83,6 +76,7 @@ CORE_PID=$!
 
 pnpm --filter @agor/executor dev &
 EXECUTOR_PID=$!
+# Executor watch is best-effort; daemon/UI don't strictly depend on it
 
 echo "✅ Watch modes started (core and executor will rebuild on file changes)"
 

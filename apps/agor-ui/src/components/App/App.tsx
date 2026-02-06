@@ -15,7 +15,7 @@ import type {
   Worktree,
 } from '@agor/core/types';
 import { PermissionScope } from '@agor/core/types';
-import { Layout } from 'antd';
+import { Layout, notification } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   type ImperativePanelHandle,
@@ -207,6 +207,7 @@ export const App: React.FC<AppProps> = ({
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [listDrawerOpen, setListDrawerOpen] = useState(false);
   const [libraryPanelOpen, setLibraryPanelOpen] = useState(false);
+  const [pendingPromptInsert, setPendingPromptInsert] = useState<string | null>(null);
   const [userSettingsOpen, setUserSettingsOpen] = useState(false);
 
   // Settings modal state via URL routing
@@ -828,6 +829,8 @@ export const App: React.FC<AppProps> = ({
                             onClose={() => {
                               setSelectedSessionId(null);
                             }}
+                            pendingPromptInsert={pendingPromptInsert}
+                            onPromptInserted={() => setPendingPromptInsert(null)}
                           />
                         ) : (
                           <EventStreamPanel
@@ -959,6 +962,23 @@ export const App: React.FC<AppProps> = ({
             onClose={() => setLibraryPanelOpen(false)}
             client={client}
             boardId={currentBoardId ?? undefined}
+            onUseTemplate={(template) => {
+              if (selectedSessionId) {
+                setPendingPromptInsert(template.template);
+                notification.success({
+                  message: 'Template inserted',
+                  description: `"${template.title}" added to prompt input`,
+                  duration: 3,
+                });
+              } else {
+                navigator.clipboard.writeText(template.template);
+                notification.info({
+                  message: 'Copied to clipboard',
+                  description: 'No session open — template text copied to clipboard',
+                  duration: 3,
+                });
+              }
+            }}
           />
           <TerminalModal
             open={terminalOpen}

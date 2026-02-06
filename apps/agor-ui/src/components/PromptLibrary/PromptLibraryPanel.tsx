@@ -21,6 +21,7 @@ interface PromptLibraryPanelProps {
   client: AgorClient | null;
   boardId?: string;
   onUseTemplate?: (template: PromptTemplate) => void;
+  defaultCategory?: PromptTemplateCategory | 'all';
 }
 
 export const PromptLibraryPanel: React.FC<PromptLibraryPanelProps> = ({
@@ -29,13 +30,19 @@ export const PromptLibraryPanel: React.FC<PromptLibraryPanelProps> = ({
   client,
   boardId,
   onUseTemplate,
+  defaultCategory = 'all',
 }) => {
   const [templates, setTemplates] = useState<PromptTemplate[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
-  const [category, setCategory] = useState<PromptTemplateCategory | 'all'>('all');
+  const [category, setCategory] = useState<PromptTemplateCategory | 'all'>(defaultCategory);
   const [sort, setSort] = useState('quality_score');
   const [architectOpen, setArchitectOpen] = useState(false);
+
+  // Sync category when defaultCategory prop changes
+  useEffect(() => {
+    setCategory(defaultCategory);
+  }, [defaultCategory]);
 
   const fetchTemplates = useCallback(async () => {
     if (!client || !open) return;

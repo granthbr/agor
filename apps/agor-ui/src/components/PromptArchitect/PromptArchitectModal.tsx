@@ -12,8 +12,19 @@ import type {
   PromptArchitectGenerateResult,
   PromptArchitectTarget,
 } from '@agor/core/types';
-import { Button, Input, Modal, notification, Select, Space, Steps, Typography } from 'antd';
+import {
+  Button,
+  Input,
+  Modal,
+  notification,
+  Segmented,
+  Select,
+  Space,
+  Steps,
+  Typography,
+} from 'antd';
 import { useState } from 'react';
+import { MarkdownRenderer } from '../MarkdownRenderer';
 
 const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
@@ -48,6 +59,7 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
 
   // Result state
   const [result, setResult] = useState<PromptArchitectGenerateResult | null>(null);
+  const [reviewMode, setReviewMode] = useState<'preview' | 'edit'>('preview');
 
   const stepIndex = step === 'describe' ? 0 : step === 'clarify' ? 1 : 2;
 
@@ -58,6 +70,7 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
     setQuestions([]);
     setAnswers({});
     setResult(null);
+    setReviewMode('preview');
     setLoading(false);
   };
 
@@ -150,6 +163,7 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
       await client.service('prompt-templates').create({
         title: result.title,
         template: result.template,
+        description: description.trim() || null,
         category: target,
         variables: result.variables_used ? JSON.stringify(result.variables_used) : null,
         metadata: JSON.stringify({
@@ -236,8 +250,15 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
       {result && (
         <>
           <div style={{ marginBottom: 12 }}>
-            <Text strong>Title: </Text>
-            <Text>{result.title}</Text>
+            <Text strong style={{ display: 'block', marginBottom: 4 }}>
+              Title:
+            </Text>
+            <Input
+              value={result.title}
+              onChange={(e) =>
+                setResult((prev) => (prev ? { ...prev, title: e.target.value } : prev))
+              }
+            />
           </div>
           {result.variables_used && result.variables_used.length > 0 && (
             <div style={{ marginBottom: 12 }}>
@@ -246,17 +267,47 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
             </div>
           )}
           <div>
-            <Text strong style={{ display: 'block', marginBottom: 8 }}>
-              Generated Prompt:
-            </Text>
-            <TextArea
-              value={result.template}
-              onChange={(e) =>
-                setResult((prev) => (prev ? { ...prev, template: e.target.value } : prev))
-              }
-              autoSize={{ minRows: 8, maxRows: 20 }}
-              style={{ fontFamily: 'monospace', fontSize: 13 }}
-            />
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: 8,
+              }}
+            >
+              <Text strong>Generated Prompt:</Text>
+              <Segmented
+                size="small"
+                value={reviewMode}
+                onChange={(value) => setReviewMode(value as 'preview' | 'edit')}
+                options={[
+                  { value: 'preview', label: 'Preview' },
+                  { value: 'edit', label: 'Edit' },
+                ]}
+              />
+            </div>
+            {reviewMode === 'preview' ? (
+              <div
+                style={{
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderRadius: 6,
+                  padding: 16,
+                  maxHeight: 400,
+                  overflow: 'auto',
+                }}
+              >
+                <MarkdownRenderer content={result.template} />
+              </div>
+            ) : (
+              <TextArea
+                value={result.template}
+                onChange={(e) =>
+                  setResult((prev) => (prev ? { ...prev, template: e.target.value } : prev))
+                }
+                autoSize={{ minRows: 8, maxRows: 24 }}
+                style={{ fontFamily: 'monospace', fontSize: 13 }}
+              />
+            )}
           </div>
         </>
       )}
@@ -312,7 +363,7 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
       open={open}
       onCancel={handleClose}
       footer={getFooter()}
-      width={700}
+      width={step === 'review' ? 800 : 700}
       destroyOnClose
     >
       <Steps
