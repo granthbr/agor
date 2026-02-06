@@ -301,7 +301,7 @@ packages/core/src/
         └── prompt-ratings.ts      # CRUD + avg calculation
 
 apps/agor-daemon/src/services/
-├── prompt-architect.ts            # AI generation (clarify/generate via @anthropic-ai/sdk)
+├── prompt-architect.ts            # AI generation (clarify/generate — dual backend: API key or Agent SDK OAuth)
 ├── prompt-templates.ts            # CRUD + auto-versioning + quality scoring
 └── prompt-ratings.ts              # CRUD + auto avg_rating recalculation
 
@@ -322,9 +322,12 @@ apps/agor-ui/src/components/
 ### UI Integration Points
 
 - **ZoneConfigModal** — "Architect" button next to Trigger Template (target: zone)
-- **NewSessionModal** — "Architect" button in Initial Prompt label (target: session)
+- **NewSessionModal** — "Architect" button + "Library" button in Initial Prompt label (target: session); Library drawer opens with `defaultCategory="session"` pre-filter
 - **AppHeader** — Library book icon button → opens PromptLibraryPanel drawer
-- **App.tsx** — `libraryPanelOpen` state manages the drawer
+- **App.tsx** — `libraryPanelOpen` state manages the drawer; `pendingPromptInsert` state wires "Use" action to SessionPanel input
+- **SessionPanel** — Consumes `pendingPromptInsert` via useEffect to populate prompt input
+- **PromptArchitectModal** — Review step has editable title (Input), preview/edit toggle for template, saves `description` from Describe step
+- **PromptLibraryPanel** — Accepts `defaultCategory` prop for pre-filtered category views; `onUseTemplate` callback inserts into active session or copies to clipboard
 
 ### Quality Scoring
 
