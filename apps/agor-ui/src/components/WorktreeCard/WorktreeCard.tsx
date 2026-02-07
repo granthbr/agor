@@ -536,53 +536,57 @@ const WorktreeCardComponent = ({
             </Tooltip>
           )}
           {!inPopover && (
-            <Button
-              type="text"
-              size="small"
-              icon={<DragOutlined />}
-              className="drag-handle"
-              title="Drag to reposition"
-              style={{ cursor: 'grab' }}
-            />
+            <Tooltip title="Drag to reposition">
+              <Button
+                type="text"
+                size="small"
+                icon={<DragOutlined />}
+                className="drag-handle"
+                style={{ cursor: 'grab' }}
+              />
+            </Tooltip>
           )}
           <div className="nodrag">
             {onOpenTerminal && (
-              <Button
-                type="text"
-                size="small"
-                icon={<CodeOutlined />}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenTerminal([`cd ${worktree.path}`], worktree.worktree_id);
-                }}
-                title="Open terminal in worktree directory"
-              />
+              <Tooltip title="Open terminal">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<CodeOutlined />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenTerminal([`cd ${worktree.path}`], worktree.worktree_id);
+                  }}
+                />
+              </Tooltip>
             )}
             {onOpenSettings && (
-              <Button
-                type="text"
-                size="small"
-                icon={<EditOutlined />}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenSettings(worktree.worktree_id);
-                }}
-                title="Edit worktree"
-              />
+              <Tooltip title="Edit worktree">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<EditOutlined />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenSettings(worktree.worktree_id);
+                  }}
+                />
+              </Tooltip>
             )}
             {!inPopover && onArchiveOrDelete && (
-              <Button
-                type="text"
-                size="small"
-                icon={<DeleteOutlined />}
-                disabled={connectionDisabled}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setArchiveDeleteModalOpen(true);
-                }}
-                title="Archive or delete worktree"
-                danger
-              />
+              <Tooltip title="Archive or delete worktree">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<DeleteOutlined />}
+                  disabled={connectionDisabled}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setArchiveDeleteModalOpen(true);
+                  }}
+                  danger
+                />
+              </Tooltip>
             )}
           </div>
         </Space>

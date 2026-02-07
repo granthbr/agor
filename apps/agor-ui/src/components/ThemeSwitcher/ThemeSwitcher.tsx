@@ -1,6 +1,6 @@
 import { BgColorsOutlined, CheckOutlined, EditOutlined } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
-import { Button, Dropdown, theme } from 'antd';
+import { Button, Dropdown, Tooltip, theme } from 'antd';
 import type React from 'react';
 import { useTheme } from '../../contexts/ThemeContext';
 
@@ -61,11 +61,9 @@ export const ThemeSwitcher: React.FC<ThemeSwitcherProps> = ({ onOpenThemeEditor 
 
   return (
     <Dropdown menu={{ items: menuItems }} placement="bottomRight" trigger={['click']}>
-      <Button
-        type="text"
-        icon={<BgColorsOutlined style={{ fontSize: token.fontSizeLG }} />}
-        title="Change theme"
-      />
+      <Tooltip title="Theme" placement="bottom">
+        <Button type="text" icon={<BgColorsOutlined style={{ fontSize: token.fontSizeLG }} />} />
+      </Tooltip>
     </Dropdown>
   );
 };

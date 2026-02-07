@@ -364,7 +364,7 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
       onCancel={handleClose}
       footer={getFooter()}
       width={step === 'review' ? 800 : 700}
-      destroyOnClose
+      destroyOnHidden
     >
       <Steps
         current={stepIndex}

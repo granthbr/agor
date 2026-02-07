@@ -11,18 +11,7 @@ import {
   UserOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
-import {
-  Badge,
-  Button,
-  Divider,
-  Dropdown,
-  Layout,
-  Popover,
-  Space,
-  Tag,
-  Tooltip,
-  theme,
-} from 'antd';
+import { Badge, Button, Dropdown, Layout, Popover, Space, Tag, Tooltip, theme } from 'antd';
 import { useState } from 'react';
 import { BoardSwitcher } from '../BoardSwitcher';
 import { BrandLogo } from '../BrandLogo';
@@ -210,7 +199,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
               {instanceLabel}
             </Tag>
           ))}
-        <Divider type="vertical" style={{ height: 32, margin: '0 8px' }} />
+        <div style={{ width: 1, height: 32, margin: '0 8px', background: token.colorBorder }} />
         {currentBoardId && boards.length > 0 && (
           <div style={{ minWidth: 200 }}>
             <BoardSwitcher
@@ -267,7 +256,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                 marginRight: 8,
               }}
             />
-            <Divider type="vertical" style={{ height: 32, margin: '0 8px' }} />
+            <div style={{ width: 1, height: 32, margin: '0 8px', background: token.colorBorder }} />
           </>
         )}
         <Tooltip title="Prompt Library" placement="bottom">

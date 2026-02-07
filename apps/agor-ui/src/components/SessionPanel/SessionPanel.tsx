@@ -10,7 +10,6 @@ import type {
 } from '@agor/core/types';
 import { SessionStatus, TaskStatus } from '@agor/core/types';
 import {
-  BranchesOutlined,
   CloseOutlined,
   CodeOutlined,
   DeleteOutlined,
@@ -19,6 +18,7 @@ import {
   SendOutlined,
   SettingOutlined,
   StopOutlined,
+  SubnodeOutlined,
 } from '@ant-design/icons';
 import { App, Badge, Button, Space, Spin, Tooltip, Typography, theme } from 'antd';
 import React from 'react';
@@ -698,7 +698,7 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
               </Tooltip>
               <Tooltip title={isRunning ? 'Session is running...' : 'Spawn Subsession'}>
                 <Button
-                  icon={<BranchesOutlined />}
+                  icon={<SubnodeOutlined />}
                   onClick={handleSubsession}
                   disabled={connectionDisabled || isRunning}
                 />

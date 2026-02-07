@@ -22,10 +22,10 @@ import {
   CommentOutlined,
   DeleteOutlined,
   FileMarkdownOutlined,
+  FullscreenOutlined,
   MinusOutlined,
   PlusOutlined,
   SelectOutlined,
-  ZoomInOutlined,
 } from '@ant-design/icons';
 import { Button, Input, Modal, Popover, Slider, Tooltip, Typography, theme } from 'antd';
 import Handlebars from 'handlebars';
@@ -61,6 +61,7 @@ import type { AgenticToolOption } from '../../types';
 import { isDarkTheme } from '../../utils/theme';
 import { AutocompleteTextarea } from '../AutocompleteTextarea/AutocompleteTextarea';
 import { MarkdownRenderer } from '../MarkdownRenderer/MarkdownRenderer';
+import { QuickReference } from '../QuickReference';
 import SessionCard from '../SessionCard';
 import WorktreeCard from '../WorktreeCard';
 import { CommentNode, ZoneNode } from './canvas/BoardObjectNodes';
@@ -2016,7 +2017,7 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
                     reactFlowInstanceRef.current?.fitView();
                   }}
                 >
-                  <ZoomInOutlined style={{ fontSize: '16px' }} />
+                  <FullscreenOutlined style={{ fontSize: '16px' }} />
                 </ControlButton>
               </Tooltip>
               {/* Custom toolbox buttons */}
@@ -2128,6 +2129,7 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
               maskStrokeColor={token.colorPrimary}
               maskStrokeWidth={2}
             />
+            <QuickReference />
           </ReactFlow>
         </div>
 
