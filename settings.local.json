@@ -1,0 +1,4 @@
+{
+  "disabledMcpjsonServers": ["playwright"],
+  "outputStyle": "Explanatory"
+}

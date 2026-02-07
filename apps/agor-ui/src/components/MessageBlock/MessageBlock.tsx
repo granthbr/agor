@@ -148,19 +148,21 @@ export const MessageBlock: React.FC<MessageBlockProps> = ({
           content={content}
           isActive={canInteract}
           onApprove={
-            canInteract && onPermissionDecision && sessionId && taskId
+            canInteract && onPermissionDecision && sessionId
               ? (messageId, scope) => {
-                  onPermissionDecision(sessionId, content.request_id, taskId, true, scope);
+                  const resolvedTaskId = taskId || message.task_id || '';
+                  onPermissionDecision(sessionId, content.request_id, resolvedTaskId, true, scope);
                 }
               : undefined
           }
           onDeny={
-            canInteract && onPermissionDecision && sessionId && taskId
+            canInteract && onPermissionDecision && sessionId
               ? (_messageId) => {
+                  const resolvedTaskId = taskId || message.task_id || '';
                   onPermissionDecision(
                     sessionId,
                     content.request_id,
-                    taskId,
+                    resolvedTaskId,
                     false,
                     PermissionScope.ONCE
                   );

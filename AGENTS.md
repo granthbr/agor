@@ -325,7 +325,7 @@ apps/agor-ui/src/components/
 - **NewSessionModal** — "Architect" button + "Library" button in Initial Prompt label (target: session); Library drawer opens with `defaultCategory="session"` pre-filter
 - **AppHeader** — Library book icon button → opens PromptLibraryPanel drawer
 - **App.tsx** — `libraryPanelOpen` state manages the drawer; `pendingPromptInsert` state wires "Use" action to SessionPanel input
-- **SessionPanel** — Consumes `pendingPromptInsert` via useEffect to populate prompt input
+- **SessionPanel** — Consumes `pendingPromptInsert` via useEffect to populate prompt input; "Reset Conversation" button (ReloadOutlined) clears `sdk_session_id` to recover from stale SDK sessions
 - **PromptArchitectModal** — Review step has editable title (Input), preview/edit toggle for template, saves `description` from Describe step
 - **PromptLibraryPanel** — Accepts `defaultCategory` prop for pre-filtered category views; `onUseTemplate` callback inserts into active session or copies to clipboard
 
@@ -370,3 +370,11 @@ cd apps/agor-daemon && rm -rf node_modules/.tsx
 # Core changes not picked up (shouldn't happen with watch mode)
 cd packages/core && pnpm build
 ```
+
+### Stale SDK Session ID
+
+If the executor exits with `"No conversation found with session ID: ..."`, the Claude-side conversation no longer exists. Click the **Reset Conversation** button (reload icon) in the SessionPanel header — this sets `sdk_session_id` to null so the next prompt starts a fresh AI conversation. Message history in Agor is preserved.
+
+### Permission Button Not Working
+
+The Approve/Deny buttons on permission requests require `sessionId` to be truthy. If the executor crashed before the permission was resolved, the `taskId` prop may be null — the handler falls back to `message.task_id`. If the session itself is stale (executor exited), reset the conversation first, then re-send the prompt.

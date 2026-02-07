@@ -15,6 +15,7 @@ import {
   CodeOutlined,
   DeleteOutlined,
   ForkOutlined,
+  ReloadOutlined,
   SendOutlined,
   SettingOutlined,
   StopOutlined,
@@ -320,6 +321,21 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
       onOk: () => {
         onDelete?.(session.session_id);
         onClose();
+      },
+    });
+  };
+
+  const handleResetConversation = () => {
+    modal.confirm({
+      title: 'Reset Conversation',
+      content:
+        'This clears the SDK session ID so the next prompt starts a fresh AI conversation. Your message history in Agor is preserved.',
+      okText: 'Reset',
+      okType: 'default',
+      cancelText: 'Cancel',
+      onOk: async () => {
+        onUpdateSession?.(session.session_id, { sdk_session_id: null });
+        message.success('Conversation reset — next prompt will start fresh');
       },
     });
   };
@@ -777,6 +793,11 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
                   icon={<SettingOutlined />}
                   onClick={() => onOpenSettings(session.session_id)}
                 />
+              </Tooltip>
+            )}
+            {onUpdateSession && (
+              <Tooltip title="Reset Conversation">
+                <Button type="text" icon={<ReloadOutlined />} onClick={handleResetConversation} />
               </Tooltip>
             )}
             {onDelete && (
