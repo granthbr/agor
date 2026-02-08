@@ -101,7 +101,7 @@ export class PermissionService {
         });
       });
 
-      // Timeout after 60 seconds
+      // Timeout after 5 minutes — gives users enough time to review and approve
       const timeout = setTimeout(() => {
         this.pendingRequests.delete(requestId);
         console.warn(`⚠️  [executor] Permission request timeout: ${requestId}`);
@@ -114,7 +114,7 @@ export class PermissionService {
           scope: PermissionScope.ONCE,
           decidedBy: 'system',
         });
-      }, 60000);
+      }, 300000);
 
       this.pendingRequests.set(requestId, { sessionId, resolve, timeout });
       console.log(`🛡️  [executor] Waiting for permission decision: ${requestId}`);
