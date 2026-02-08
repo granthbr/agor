@@ -358,6 +358,45 @@ Implementation: `packages/core/src/tools/claude/thinking-detector.ts`
 
 ---
 
+## Remote Dev Instance (172.31.231.133)
+
+**Host:** `agent@172.31.231.133` (Nebula prod network — dev IP `192.168.100.133` is separate)
+**Repo:** `~/agor` on branch `feat/prompt-architect`
+**Stack:** `docker compose up` (base compose, SQLite mode, NOT postgres profile)
+**Database:** SQLite at `/home/agor/.agor/agor.db` (~44MB, persisted in `agor-home` Docker volume)
+**Ports:** 3030 (daemon), 5173 (UI)
+
+### Sync Script
+
+Push local source changes to the remote host:
+```bash
+cd /Users/brandongrantham/projects/agor
+./sync-to-remote.sh            # rsync changed files
+./sync-to-remote.sh --dry-run  # preview only
+```
+After syncing, the container's watch modes (tsup, tsx, Vite) auto-reload. For dependency changes (`pnpm-lock.yaml`), rebuild the image:
+```bash
+ssh agent@172.31.231.133 "cd ~/agor && docker compose up --build -d"
+```
+
+### Migrating SQLite → PostgreSQL
+
+Current state is SQLite. To switch to PostgreSQL without losing data:
+
+1. **Dump SQLite** (inside running container):
+   ```bash
+   ssh agent@172.31.231.133 "cd ~/agor && docker compose exec agor-dev sqlite3 /home/agor/.agor/agor.db .dump > /tmp/agor-sqlite-dump.sql"
+   ```
+2. **Start with postgres profile**:
+   ```bash
+   ssh agent@172.31.231.133 "cd ~/agor && docker compose --profile postgres up -d"
+   ```
+3. **Import data** — Convert SQLite dump to PostgreSQL-compatible SQL and load into the postgres container. Schema differences (e.g., `INTEGER` vs `SERIAL`, `TEXT` vs `VARCHAR`) will need manual adjustment. Drizzle migrations create the schema automatically, so only `INSERT` statements need importing.
+
+**Note:** The `agor-home` Docker volume retains the SQLite DB even after switching. Reverting to SQLite is non-destructive.
+
+---
+
 ## Troubleshooting
 
 ```bash
@@ -378,3 +417,33 @@ If the executor exits with `"No conversation found with session ID: ..."`, the C
 ### Permission Button Not Working
 
 The Approve/Deny buttons on permission requests require `sessionId` to be truthy. If the executor crashed before the permission was resolved, the `taskId` prop may be null — the handler falls back to `message.task_id`. If the session itself is stale (executor exited), reset the conversation first, then re-send the prompt.
+
+### Permission Request Timeout
+
+The executor waits **5 minutes** (300,000ms) for a permission decision before auto-denying and stopping execution. If the Approve button appears unresponsive, the request likely timed out — the card transitions from "pending" (yellow border, interactive buttons) to "denied" (no buttons). Reset the conversation and re-send the prompt. The timeout is configured in:
+- `packages/core/src/permissions/permission-service.ts`
+- `packages/executor/src/permissions/permission-service.ts`
+
+---
+
+## UI UX Improvements (Feb 2026)
+
+### Tooltips
+- **WorktreeCard** — All 4 action buttons (Drag, Terminal, Edit, Delete) use Ant Design `<Tooltip>` instead of native HTML `title` attributes
+- **ThemeSwitcher** — Dropdown trigger button wrapped in `<Tooltip title="Theme">`
+
+### Icon Swaps
+- **Fit View** (`SessionCanvas.tsx`) — `ZoomInOutlined` → `FullscreenOutlined` (expand arrows instead of magnifying glass)
+- **Spawn Subsession** (`SessionPanel.tsx`) — `BranchesOutlined` → `SubnodeOutlined` (avoids confusion with git branch icon used on worktree cards)
+
+### Ant Design v6 Deprecation Fixes
+- **AppHeader** — `<Divider type="vertical">` replaced with styled `<div>` separators (2 instances)
+- **PromptArchitectModal** — `destroyOnClose` → `destroyOnHidden`
+
+### Quick Reference Panel
+- **New component:** `QuickReference/QuickReference.tsx` — Collapsible floating legend in bottom-right of canvas
+- Renders inside `<ReactFlow>` as sibling to `<MiniMap>`, positioned absolutely
+- 5 sections: Canvas, Worktree, Session, Prompt Architect, Header
+- Prompt Architect section explains: Architect (AI generation), Library (browse templates), Rate (post-session rating)
+- Collapse state persisted in `localStorage` (`agor-quick-reference-collapsed`)
+- Themed via `theme.useToken()`, semi-transparent with `backdropFilter: blur(8px)`
