@@ -403,6 +403,29 @@ After syncing, the container's watch modes (tsup, tsx, Vite) auto-reload. For de
 ssh agent@172.31.231.133 "cd ~/agor && docker compose up --build -d"
 ```
 
+### Sync Caveats — Branch Divergence
+
+The remote repo may have code from `origin/main` that the local branch doesn't have (e.g., gateway/Slack feature). Syncing overwrites source files but **does not remove** files or directories that exist only on the remote. This can cause:
+
+1. **Merge conflict markers in config files** — `tsup.config.ts` may have `<<<<<<< HEAD` markers if the remote had different entries. Fix by `scp`-ing the correct local version: `scp packages/core/tsup.config.ts agent@192.168.100.133:~/agor/packages/core/tsup.config.ts`
+2. **DTS build failures from orphaned source** — Gateway/Slack `.ts` files may exist in `packages/core/src/gateway/` on the remote but not locally. TypeScript's `tsconfig.json` includes them, causing DTS errors for missing `@slack/*` packages. The JS build succeeds (tsup only compiles entry points), but `set -e` in the entrypoint can abort on DTS failure.
+3. **Migration conflicts** — The remote's `drizzle/sqlite/` directory may contain migrations from both branches. If a migration references a table created by a migration from the other branch that hasn't run yet, `pnpm agor db migrate` fails. Fix by ensuring the migration directory matches the current branch.
+
+**Recovery pattern:**
+```bash
+# 1. Copy correct tsup.config.ts from local branch
+scp packages/core/tsup.config.ts agent@192.168.100.133:~/agor/packages/core/tsup.config.ts
+
+# 2. Rebuild core inside container (JS build succeeds even if DTS fails)
+ssh agent@192.168.100.133 "docker exec agor-agor-dev-1 sh -c 'cd /app/packages/core && npx tsup'"
+
+# 3. If migrations fail, sync the drizzle directory from local
+rsync -av packages/core/drizzle/ agent@192.168.100.133:~/agor/packages/core/drizzle/
+
+# 4. Restart container
+ssh agent@192.168.100.133 "docker restart agor-agor-dev-1"
+```
+
 ### Migrating SQLite → PostgreSQL
 
 Current state is SQLite. To switch to PostgreSQL without losing data:
