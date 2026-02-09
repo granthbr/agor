@@ -63,6 +63,8 @@ export interface ZoneTrigger {
   template: string;
   /** Trigger behavior mode (default: 'show_picker') */
   behavior: ZoneTriggerBehavior;
+  /** Optional preprocessor template IDs to compose with trigger template */
+  preprocessor_ids?: string[];
 }
 
 /**

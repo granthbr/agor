@@ -58,6 +58,7 @@ export const TemplateCard: React.FC<TemplateCardProps> = ({ template, onUse, onF
     session: 'green',
     scheduler: 'orange',
     generic: 'default',
+    preprocessor: 'purple',
   };
 
   return (

@@ -7,6 +7,7 @@ import type { BoardObject, ZoneTriggerBehavior } from '@agor/core/types';
 import { Alert, Input, Modal, Select, theme } from 'antd';
 import { useEffect, useId, useRef, useState } from 'react';
 import { PromptArchitectButton } from '../../PromptArchitect';
+import { PreprocessorPicker } from '../../PromptLibrary/PreprocessorPicker';
 
 interface ZoneConfigModalProps {
   open: boolean;
@@ -31,6 +32,7 @@ export const ZoneConfigModal = ({
   const [name, setName] = useState(zoneName);
   const [triggerBehavior, setTriggerBehavior] = useState<ZoneTriggerBehavior>('show_picker');
   const [triggerTemplate, setTriggerTemplate] = useState('');
+  const [selectedPreprocessorIds, setSelectedPreprocessorIds] = useState<string[]>([]);
   const nameId = useId();
   const triggerBehaviorId = useId();
   const triggerTemplateId = useId();
@@ -45,9 +47,11 @@ export const ZoneConfigModal = ({
       if (zoneData.type === 'zone' && zoneData.trigger) {
         setTriggerBehavior(zoneData.trigger.behavior);
         setTriggerTemplate(zoneData.trigger.template);
+        setSelectedPreprocessorIds(zoneData.trigger.preprocessor_ids || []);
       } else {
         setTriggerBehavior('show_picker');
         setTriggerTemplate('');
+        setSelectedPreprocessorIds([]);
       }
     } else if (!open) {
       // Reset flag when modal closes
@@ -60,7 +64,9 @@ export const ZoneConfigModal = ({
       const hasChanges =
         name !== zoneName ||
         triggerTemplate.trim() !== (zoneData.trigger?.template || '') ||
-        triggerBehavior !== (zoneData.trigger?.behavior || 'show_picker');
+        triggerBehavior !== (zoneData.trigger?.behavior || 'show_picker') ||
+        JSON.stringify(selectedPreprocessorIds) !==
+          JSON.stringify(zoneData.trigger?.preprocessor_ids || []);
 
       if (hasChanges) {
         onUpdate(objectId, {
@@ -71,6 +77,8 @@ export const ZoneConfigModal = ({
             ? {
                 behavior: triggerBehavior,
                 template: triggerTemplate.trim(),
+                preprocessor_ids:
+                  selectedPreprocessorIds.length > 0 ? selectedPreprocessorIds : undefined,
               }
             : undefined, // Remove trigger if template is empty
         });
@@ -171,6 +179,16 @@ export const ZoneConfigModal = ({
           placeholder="Enter the prompt template that will be triggered when a worktree is dropped here..."
           rows={6}
         />
+        {/* Preprocessor Picker */}
+        <div style={{ marginTop: 12 }}>
+          <PreprocessorPicker
+            client={client || null}
+            targetCategory="zone"
+            selectedIds={selectedPreprocessorIds}
+            onChange={setSelectedPreprocessorIds}
+          />
+        </div>
+
         <Alert
           message="Handlebars Template Support"
           description={

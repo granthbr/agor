@@ -5,6 +5,8 @@ import type {
   CodexSandboxMode,
   MCPServer,
   PermissionMode,
+  PreprocessorMetadata,
+  PromptTemplate,
   User,
   Worktree,
 } from '@agor/core/types';
@@ -12,6 +14,7 @@ import { getDefaultPermissionMode } from '@agor/core/types';
 import { BookOutlined, DownOutlined } from '@ant-design/icons';
 import { Alert, Button, Collapse, Form, Input, Modal, Space, Typography } from 'antd';
 import { useEffect, useState } from 'react';
+import { composeTemplate } from '../../utils/composeTemplate';
 import { AgenticToolConfigForm } from '../AgenticToolConfigForm';
 import {
   type AgenticToolOption,
@@ -21,6 +24,7 @@ import { AutocompleteTextarea } from '../AutocompleteTextarea';
 import type { ModelConfig } from '../ModelSelector';
 import { PromptArchitectButton } from '../PromptArchitect';
 import { PromptLibraryPanel } from '../PromptLibrary';
+import { PreprocessorPicker } from '../PromptLibrary/PreprocessorPicker';
 
 export interface NewSessionConfig {
   worktree_id: string; // Required - sessions are always created from a worktree
@@ -67,6 +71,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
   const [isFormValid, setIsFormValid] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [selectedPreprocessorIds, setSelectedPreprocessorIds] = useState<string[]>([]);
 
   // Reset form when modal opens, using user defaults if available
   useEffect(() => {
@@ -75,6 +80,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
     setSelectedAgent('claude-code');
     setIsCreating(false); // Reset creating state when modal opens
     setLibraryOpen(false);
+    setSelectedPreprocessorIds([]);
 
     // Get default config for the selected agent
     const agentDefaults = currentUser?.default_agentic_config?.['claude-code'];
@@ -123,44 +129,69 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
     setIsFormValid(hasAgent);
   };
 
-  const handleCreate = () => {
-    form.validateFields().then((values) => {
-      // Prevent duplicate submissions
-      setIsCreating(true);
+  const handleCreate = async () => {
+    const values = await form.validateFields();
+    // Prevent duplicate submissions
+    setIsCreating(true);
 
-      // Get user defaults for the selected agent (fallback if form fields weren't mounted)
-      const agentDefaults = currentUser?.default_agentic_config?.[selectedAgent as AgenticToolName];
-
-      const config: NewSessionConfig = {
-        worktree_id: worktreeId,
-        agent: selectedAgent,
-        title: values.title,
-        initialPrompt: values.initialPrompt,
-        // Use form values if present (user expanded advanced), otherwise use defaults
-        modelConfig: values.modelConfig ?? agentDefaults?.modelConfig,
-        mcpServerIds: values.mcpServerIds ?? agentDefaults?.mcpServerIds,
-        permissionMode:
-          (values.permissionMode as PermissionMode | undefined) ??
-          agentDefaults?.permissionMode ??
-          getDefaultPermissionMode(selectedAgent as AgenticToolName),
-      };
-
-      if (selectedAgent === 'codex') {
-        config.codexSandboxMode =
-          (values.codexSandboxMode as CodexSandboxMode | undefined) ??
-          agentDefaults?.codexSandboxMode ??
-          ('workspace-write' as CodexSandboxMode);
-        config.codexApprovalPolicy =
-          (values.codexApprovalPolicy as CodexApprovalPolicy | undefined) ??
-          agentDefaults?.codexApprovalPolicy ??
-          ('on-request' as CodexApprovalPolicy);
-        config.codexNetworkAccess =
-          values.codexNetworkAccess ?? agentDefaults?.codexNetworkAccess ?? false;
+    // Compose initial prompt with preprocessors if any are selected
+    let initialPrompt = values.initialPrompt;
+    if (initialPrompt && selectedPreprocessorIds.length > 0 && client) {
+      try {
+        const result = await client.service('prompt-templates').find({
+          query: { category: 'preprocessor', $limit: 100 },
+        });
+        // biome-ignore lint/suspicious/noExplicitAny: Feathers pagination wrapper
+        const allTemplates = ((result as any).data ?? result) as PromptTemplate[];
+        const orderedPPs = selectedPreprocessorIds
+          .map((id) => allTemplates.find((t) => t.template_id === id))
+          .filter(Boolean) as PromptTemplate[];
+        if (orderedPPs.length > 0) {
+          initialPrompt = composeTemplate(
+            initialPrompt,
+            orderedPPs.map((pp) => ({
+              template: pp.template,
+              metadata: pp.metadata as PreprocessorMetadata | null,
+            }))
+          );
+        }
+      } catch {
+        // Silently fail — use original prompt
       }
+    }
 
-      onCreate(config);
-      // Note: isCreating will be reset when modal reopens via useEffect
-    });
+    // Get user defaults for the selected agent (fallback if form fields weren't mounted)
+    const agentDefaults = currentUser?.default_agentic_config?.[selectedAgent as AgenticToolName];
+
+    const config: NewSessionConfig = {
+      worktree_id: worktreeId,
+      agent: selectedAgent,
+      title: values.title,
+      initialPrompt,
+      // Use form values if present (user expanded advanced), otherwise use defaults
+      modelConfig: values.modelConfig ?? agentDefaults?.modelConfig,
+      mcpServerIds: values.mcpServerIds ?? agentDefaults?.mcpServerIds,
+      permissionMode:
+        (values.permissionMode as PermissionMode | undefined) ??
+        agentDefaults?.permissionMode ??
+        getDefaultPermissionMode(selectedAgent as AgenticToolName),
+    };
+
+    if (selectedAgent === 'codex') {
+      config.codexSandboxMode =
+        (values.codexSandboxMode as CodexSandboxMode | undefined) ??
+        agentDefaults?.codexSandboxMode ??
+        ('workspace-write' as CodexSandboxMode);
+      config.codexApprovalPolicy =
+        (values.codexApprovalPolicy as CodexApprovalPolicy | undefined) ??
+        agentDefaults?.codexApprovalPolicy ??
+        ('on-request' as CodexApprovalPolicy);
+      config.codexNetworkAccess =
+        values.codexNetworkAccess ?? agentDefaults?.codexNetworkAccess ?? false;
+    }
+
+    onCreate(config);
+    // Note: isCreating will be reset when modal reopens via useEffect
   };
 
   const handleCancel = () => {
@@ -262,6 +293,14 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
             userById={userById}
           />
         </Form.Item>
+
+        {/* Preprocessor Picker */}
+        <PreprocessorPicker
+          client={client}
+          targetCategory="session"
+          selectedIds={selectedPreprocessorIds}
+          onChange={setSelectedPreprocessorIds}
+        />
 
         {/* Advanced Configuration (Collapsible) */}
         <Collapse

@@ -334,7 +334,7 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
       okType: 'default',
       cancelText: 'Cancel',
       onOk: async () => {
-        onUpdateSession?.(session.session_id, { sdk_session_id: null });
+        onUpdateSession?.(session.session_id, { sdk_session_id: undefined });
         message.success('Conversation reset — next prompt will start fresh');
       },
     });

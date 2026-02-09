@@ -57,6 +57,7 @@ export const TemplateSearch: React.FC<TemplateSearchProps> = ({
           { label: 'Session', value: 'session' },
           { label: 'Scheduler', value: 'scheduler' },
           { label: 'Generic', value: 'generic' },
+          { label: 'Pre-Process', value: 'preprocessor' },
         ]}
         block
         size="small"

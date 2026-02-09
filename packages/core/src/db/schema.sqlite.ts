@@ -923,7 +923,7 @@ export const promptTemplates = sqliteTable(
     title: text('title').notNull(),
     description: text('description'),
     category: text('category', {
-      enum: ['session', 'zone', 'scheduler', 'generic'],
+      enum: ['session', 'zone', 'scheduler', 'generic', 'preprocessor'],
     }).notNull(),
     template: text('template').notNull(),
     variables: text('variables'), // JSON string array
@@ -995,6 +995,31 @@ export const promptRatings = sqliteTable(
 );
 
 /**
+ * Template Preprocessors junction table - Many-to-many relationship between templates
+ *
+ * Links a template to its preprocessor fragments (which are also templates with category='preprocessor').
+ * Preprocessors are composable building blocks prepended/appended to the main template at use time.
+ */
+export const templatePreprocessors = sqliteTable(
+  'template_preprocessors',
+  {
+    template_id: text('template_id', { length: 36 })
+      .notNull()
+      .references(() => promptTemplates.template_id, { onDelete: 'cascade' }),
+    preprocessor_id: text('preprocessor_id', { length: 36 })
+      .notNull()
+      .references(() => promptTemplates.template_id, { onDelete: 'cascade' }),
+    sort_order: integer('sort_order').notNull().default(0),
+    created_at: t.timestamp('created_at').notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.template_id, table.preprocessor_id] }),
+    templateIdx: index('template_preprocessors_template_idx').on(table.template_id),
+    preprocessorIdx: index('template_preprocessors_preprocessor_idx').on(table.preprocessor_id),
+  })
+);
+
+/**
  * Type exports for use with Drizzle ORM
  */
 export type SessionRow = typeof sessions.$inferSelect;
@@ -1025,3 +1050,5 @@ export type PromptTemplateVersionRow = typeof promptTemplateVersions.$inferSelec
 export type PromptTemplateVersionInsert = typeof promptTemplateVersions.$inferInsert;
 export type PromptRatingRow = typeof promptRatings.$inferSelect;
 export type PromptRatingInsert = typeof promptRatings.$inferInsert;
+export type TemplatePreprocessorRow = typeof templatePreprocessors.$inferSelect;
+export type TemplatePreprocessorInsert = typeof templatePreprocessors.$inferInsert;

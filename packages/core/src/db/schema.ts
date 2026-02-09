@@ -35,6 +35,7 @@ export const boardComments = schema.boardComments;
 export const promptTemplates = schema.promptTemplates;
 export const promptTemplateVersions = schema.promptTemplateVersions;
 export const promptRatings = schema.promptRatings;
+export const templatePreprocessors = schema.templatePreprocessors;
 
 // Re-export all types
 export type * from './schema.sqlite';

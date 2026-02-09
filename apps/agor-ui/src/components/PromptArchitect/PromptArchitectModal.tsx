@@ -8,9 +8,11 @@
 
 import type { AgorClient } from '@agor/core/api';
 import type {
+  PreprocessorMetadata,
   PromptArchitectClarifyResult,
   PromptArchitectGenerateResult,
   PromptArchitectTarget,
+  PromptTemplate,
 } from '@agor/core/types';
 import {
   Button,
@@ -24,7 +26,9 @@ import {
   Typography,
 } from 'antd';
 import { useState } from 'react';
+import { composeTemplate } from '../../utils/composeTemplate';
 import { MarkdownRenderer } from '../MarkdownRenderer';
+import { PreprocessorPicker } from '../PromptLibrary/PreprocessorPicker';
 
 const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
@@ -63,6 +67,10 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // Preprocessor state (for non-preprocessor templates)
+  const [selectedPreprocessorIds, setSelectedPreprocessorIds] = useState<string[]>([]);
+  const [preprocessorTemplates, setPreprocessorTemplates] = useState<PromptTemplate[]>([]);
+
   const stepIndex = step === 'describe' ? 0 : step === 'clarify' ? 1 : 2;
 
   const reset = () => {
@@ -76,6 +84,8 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
     setLoading(false);
     setSaved(false);
     setSaving(false);
+    setSelectedPreprocessorIds([]);
+    setPreprocessorTemplates([]);
   };
 
   const handleClose = () => {
@@ -179,8 +189,22 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
 
     setSaving(true);
     try {
-      await client.service('prompt-templates').create(payload);
+      // biome-ignore lint/suspicious/noExplicitAny: Feathers create returns dynamic shape
+      const created = (await client.service('prompt-templates').create(payload)) as any;
       setSaved(true);
+
+      // Save preprocessor associations if any were selected
+      if (selectedPreprocessorIds.length > 0 && created?.template_id) {
+        try {
+          await client.service('template-preprocessors').create({
+            template_id: created.template_id,
+            preprocessor_ids: selectedPreprocessorIds,
+          });
+        } catch (ppError) {
+          console.warn('Failed to save preprocessor associations:', ppError);
+        }
+      }
+
       return true;
     } catch (error) {
       console.warn('Failed to auto-save template:', error);
@@ -197,8 +221,24 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
   const handleUse = async () => {
     if (!result) return;
     await saveToLibrary();
+
+    // Compose with preprocessors if any are selected
+    let finalTemplate = result.template;
+    if (selectedPreprocessorIds.length > 0 && preprocessorTemplates.length > 0) {
+      const orderedPPs = selectedPreprocessorIds
+        .map((id) => preprocessorTemplates.find((t) => t.template_id === id))
+        .filter(Boolean) as PromptTemplate[];
+      finalTemplate = composeTemplate(
+        result.template,
+        orderedPPs.map((pp) => ({
+          template: pp.template,
+          metadata: pp.metadata as PreprocessorMetadata | null,
+        }))
+      );
+    }
+
     notification.success({ message: `Saved & inserted "${result.title}"` });
-    onComplete({ title: result.title, template: result.template });
+    onComplete({ title: result.title, template: finalTemplate });
   };
 
   const handleSave = async () => {
@@ -222,6 +262,7 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
             { value: 'zone', label: 'Zone Template (Handlebars)' },
             { value: 'session', label: 'Session Prompt (static)' },
             { value: 'scheduler', label: 'Scheduler Template (Handlebars)' },
+            { value: 'preprocessor', label: 'Pre-Process Fragment' },
           ]}
         />
       </div>
@@ -269,6 +310,25 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
       ))}
     </div>
   );
+
+  // When preprocessor selection changes, fetch full templates so we can compose
+  const handlePreprocessorChange = async (ids: string[]) => {
+    setSelectedPreprocessorIds(ids);
+    if (!client || ids.length === 0) {
+      setPreprocessorTemplates([]);
+      return;
+    }
+    try {
+      const result = await client.service('prompt-templates').find({
+        query: { category: 'preprocessor', $limit: 100 },
+      });
+      // biome-ignore lint/suspicious/noExplicitAny: Feathers pagination wrapper
+      const allTemplates = ((result as any).data ?? result) as PromptTemplate[];
+      setPreprocessorTemplates(allTemplates.filter((t) => ids.includes(t.template_id)));
+    } catch {
+      // Silently fail
+    }
+  };
 
   const renderReviewStep = () => (
     <div>
@@ -334,6 +394,22 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
               />
             )}
           </div>
+
+          {/* Preprocessor picker — only for non-preprocessor templates */}
+          {target !== 'preprocessor' && (
+            <div style={{ marginTop: 16 }}>
+              <PreprocessorPicker
+                client={client}
+                targetCategory={
+                  target === 'zone' || target === 'session' || target === 'scheduler'
+                    ? target
+                    : undefined
+                }
+                selectedIds={selectedPreprocessorIds}
+                onChange={handlePreprocessorChange}
+              />
+            </div>
+          )}
         </>
       )}
     </div>

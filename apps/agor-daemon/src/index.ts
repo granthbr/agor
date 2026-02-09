@@ -330,6 +330,7 @@ import { SchedulerService } from './services/scheduler';
 import { createSessionMCPServersService } from './services/session-mcp-servers';
 import { createSessionsService } from './services/sessions';
 import { createTasksService } from './services/tasks';
+import { createTemplatePreprocessorsService } from './services/template-preprocessors';
 import { TerminalsService } from './services/terminals';
 import { createUsersService } from './services/users';
 import { setupWorktreeOwnersService } from './services/worktree-owners.js';
@@ -1005,6 +1006,7 @@ async function main() {
   app.use('/prompt-architect', createPromptArchitectService());
   app.use('/prompt-templates', createPromptTemplatesService(db));
   app.use('/prompt-ratings', createPromptRatingsService(db));
+  app.use('/template-preprocessors', createTemplatePreprocessorsService(db));
 
   // Register worktrees service first (repos service needs to access it)
   // NOTE: Pass app instance for environment management (needs to access repos service)

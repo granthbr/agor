@@ -27,10 +27,36 @@ export type PromptRatingID = UUID;
 // ============================================================================
 
 /** Template categories */
-export type PromptTemplateCategory = 'session' | 'zone' | 'scheduler' | 'generic';
+export type PromptTemplateCategory = 'session' | 'zone' | 'scheduler' | 'generic' | 'preprocessor';
 
 /** Architect generation target */
-export type PromptArchitectTarget = 'zone' | 'session' | 'scheduler';
+export type PromptArchitectTarget = 'zone' | 'session' | 'scheduler' | 'preprocessor';
+
+/** Preprocessor sub-types */
+export type PreprocessorType =
+  | 'github_issue'
+  | 'plan'
+  | 'environment'
+  | 'scheduling'
+  | 'reference'
+  | 'custom';
+
+/** Extended metadata for preprocessor templates */
+export interface PreprocessorMetadata extends PromptTemplateMetadata {
+  preprocessor_type?: PreprocessorType;
+  /** Which template categories this preprocessor is compatible with (empty = all) */
+  compatible_categories?: PromptTemplateCategory[];
+  /** Where to insert relative to main template */
+  insertion_mode?: 'before' | 'after';
+}
+
+/** Junction record: template <-> preprocessor */
+export interface TemplatePreprocessor {
+  template_id: PromptTemplateID;
+  preprocessor_id: PromptTemplateID;
+  sort_order: number;
+  created_at: Date;
+}
 
 /** Architect action types */
 export type PromptArchitectAction = 'clarify' | 'generate';

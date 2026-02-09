@@ -6,7 +6,11 @@
  */
 
 import type { AgorClient } from '@agor/core/api';
-import type { PromptTemplate, PromptTemplateCategory } from '@agor/core/types';
+import type {
+  PreprocessorMetadata,
+  PromptTemplate,
+  PromptTemplateCategory,
+} from '@agor/core/types';
 import {
   CopyOutlined,
   DeleteOutlined,
@@ -23,6 +27,7 @@ import {
   Modal,
   notification,
   Popconfirm,
+  Radio,
   Select,
   Space,
   Spin,
@@ -51,6 +56,7 @@ const CATEGORY_COLORS: Record<PromptTemplateCategory, string> = {
   zone: 'green',
   scheduler: 'purple',
   generic: 'default',
+  preprocessor: 'magenta',
 };
 
 export const TemplatesTable: React.FC<TemplatesTableProps> = ({ client, boardId }) => {
@@ -189,12 +195,16 @@ export const TemplatesTable: React.FC<TemplatesTableProps> = ({ client, boardId 
   // Edit
   const openEdit = (template: PromptTemplate) => {
     setEditingTemplate(template);
+    const meta = template.metadata as PreprocessorMetadata | null;
     editForm.setFieldsValue({
       title: template.title,
       description: template.description ?? '',
       category: template.category,
       template: template.template,
       change_note: '',
+      preprocessor_type: meta?.preprocessor_type ?? 'custom',
+      compatible_categories: meta?.compatible_categories ?? [],
+      insertion_mode: meta?.insertion_mode ?? 'before',
     });
   };
 
@@ -203,12 +213,26 @@ export const TemplatesTable: React.FC<TemplatesTableProps> = ({ client, boardId 
     try {
       const values = await editForm.validateFields();
       setEditSaving(true);
+
+      // Build metadata — merge preprocessor fields if category is 'preprocessor'
+      let metadata = editingTemplate.metadata || {};
+      if (values.category === 'preprocessor') {
+        metadata = {
+          ...metadata,
+          preprocessor_type: values.preprocessor_type,
+          compatible_categories:
+            values.compatible_categories?.length > 0 ? values.compatible_categories : undefined,
+          insertion_mode: values.insertion_mode,
+        } as PreprocessorMetadata;
+      }
+
       await client.service('prompt-templates').patch(editingTemplate.template_id, {
         title: values.title,
         description: values.description || null,
         category: values.category,
         template: values.template,
         change_note: values.change_note || null,
+        metadata: JSON.stringify(metadata),
       });
       notification.success({ message: `Updated "${values.title}"` });
       setEditingTemplate(null);
@@ -364,6 +388,7 @@ export const TemplatesTable: React.FC<TemplatesTableProps> = ({ client, boardId 
             { value: 'zone', label: 'Zone' },
             { value: 'scheduler', label: 'Scheduler' },
             { value: 'generic', label: 'Generic' },
+            { value: 'preprocessor', label: 'Pre-Process' },
           ]}
         />
         <Select
@@ -436,9 +461,51 @@ export const TemplatesTable: React.FC<TemplatesTableProps> = ({ client, boardId 
                 { value: 'zone', label: 'Zone' },
                 { value: 'scheduler', label: 'Scheduler' },
                 { value: 'generic', label: 'Generic' },
+                { value: 'preprocessor', label: 'Pre-Process Fragment' },
               ]}
             />
           </Form.Item>
+
+          {/* Preprocessor-specific fields — only shown when category is 'preprocessor' */}
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.category !== cur.category}>
+            {({ getFieldValue }) =>
+              getFieldValue('category') === 'preprocessor' ? (
+                <>
+                  <Form.Item name="preprocessor_type" label="Preprocessor Type">
+                    <Select
+                      options={[
+                        { value: 'github_issue', label: 'GitHub Issue' },
+                        { value: 'plan', label: 'Plan Pattern' },
+                        { value: 'environment', label: 'Environment' },
+                        { value: 'scheduling', label: 'Scheduling' },
+                        { value: 'reference', label: 'Reference' },
+                        { value: 'custom', label: 'Custom' },
+                      ]}
+                    />
+                  </Form.Item>
+                  <Form.Item name="compatible_categories" label="Compatible With">
+                    <Select
+                      mode="multiple"
+                      placeholder="All categories (leave empty for universal)"
+                      options={[
+                        { value: 'session', label: 'Session' },
+                        { value: 'zone', label: 'Zone' },
+                        { value: 'scheduler', label: 'Scheduler' },
+                        { value: 'generic', label: 'Generic' },
+                      ]}
+                    />
+                  </Form.Item>
+                  <Form.Item name="insertion_mode" label="Insertion Mode">
+                    <Radio.Group>
+                      <Radio value="before">Before main template</Radio>
+                      <Radio value="after">After main template</Radio>
+                    </Radio.Group>
+                  </Form.Item>
+                </>
+              ) : null
+            }
+          </Form.Item>
+
           <Form.Item
             name="template"
             label="Template"
