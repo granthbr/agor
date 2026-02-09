@@ -41,4 +41,5 @@ yarn-error.log*
 
 # Agor specific
 .agor/
+agor-state/
 apps/agor-desktop/out/
