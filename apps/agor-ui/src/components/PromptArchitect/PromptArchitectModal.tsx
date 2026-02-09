@@ -60,6 +60,8 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
   // Result state
   const [result, setResult] = useState<PromptArchitectGenerateResult | null>(null);
   const [reviewMode, setReviewMode] = useState<'preview' | 'edit'>('preview');
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const stepIndex = step === 'describe' ? 0 : step === 'clarify' ? 1 : 2;
 
@@ -72,6 +74,8 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
     setResult(null);
     setReviewMode('preview');
     setLoading(false);
+    setSaved(false);
+    setSaving(false);
   };
 
   const handleClose = () => {
@@ -150,36 +154,57 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
     }
   };
 
-  const handleUse = () => {
-    if (result) {
-      onComplete({ title: result.title, template: result.template });
+  const buildSavePayload = () => {
+    if (!result) return null;
+    return {
+      title: result.title,
+      template: result.template,
+      description: description.trim() || null,
+      category: target,
+      variables: result.variables_used ? JSON.stringify(result.variables_used) : null,
+      metadata: JSON.stringify({
+        original_description: description,
+        clarifications: answers,
+        target,
+      }),
+      board_id: boardId ?? null,
+      created_by: 'anonymous',
+    };
+  };
+
+  const saveToLibrary = async () => {
+    if (!client || saved) return;
+    const payload = buildSavePayload();
+    if (!payload) return;
+
+    setSaving(true);
+    try {
+      await client.service('prompt-templates').create(payload);
+      setSaved(true);
+      return true;
+    } catch (error) {
+      console.warn('Failed to auto-save template:', error);
+      notification.warning({
+        message: 'Template not saved to library',
+        description: error instanceof Error ? error.message : 'Save failed',
+      });
+      return false;
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleSave = async () => {
-    if (!client || !result) return;
+  const handleUse = async () => {
+    if (!result) return;
+    await saveToLibrary();
+    notification.success({ message: `Saved & inserted "${result.title}"` });
+    onComplete({ title: result.title, template: result.template });
+  };
 
-    try {
-      await client.service('prompt-templates').create({
-        title: result.title,
-        template: result.template,
-        description: description.trim() || null,
-        category: target,
-        variables: result.variables_used ? JSON.stringify(result.variables_used) : null,
-        metadata: JSON.stringify({
-          original_description: description,
-          clarifications: answers,
-          target,
-        }),
-        board_id: boardId ?? null,
-        created_by: 'anonymous',
-      });
+  const handleSave = async () => {
+    const ok = await saveToLibrary();
+    if (ok && result) {
       notification.success({ message: `Saved "${result.title}" to library` });
-    } catch (error) {
-      notification.error({
-        message: 'Failed to save template',
-        description: error instanceof Error ? error.message : 'Unknown error',
-      });
     }
   };
 
@@ -349,8 +374,10 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
     return (
       <Space>
         <Button onClick={() => setStep('describe')}>Start Over</Button>
-        <Button onClick={handleSave}>Save to Library</Button>
-        <Button type="primary" onClick={handleUse}>
+        <Button onClick={handleSave} disabled={saved || saving}>
+          {saved ? 'Saved' : 'Save to Library'}
+        </Button>
+        <Button type="primary" onClick={handleUse} loading={saving}>
           Use This Prompt
         </Button>
       </Space>

@@ -17,6 +17,7 @@ import {
   AppstoreOutlined,
   BranchesOutlined,
   CloseOutlined,
+  FileTextOutlined,
   FolderOutlined,
   InfoCircleOutlined,
   RobotOutlined,
@@ -32,6 +33,7 @@ import { AgenticToolsSection } from './AgenticToolsSection';
 import { BoardsTable } from './BoardsTable';
 import { MCPServersTable } from './MCPServersTable';
 import { ReposTable } from './ReposTable';
+import { TemplatesTable } from './TemplatesTable';
 import { UsersTable } from './UsersTable';
 import { WorktreesTable } from './WorktreesTable';
 
@@ -181,6 +183,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           label: 'Worktrees',
           icon: <BranchesOutlined />,
         },
+        {
+          key: 'templates',
+          label: 'Templates',
+          icon: <FileTextOutlined />,
+        },
       ],
     },
     {
@@ -266,6 +273,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             onStopEnvironment={onStopEnvironment}
           />
         );
+      case 'templates':
+        return <TemplatesTable client={client} />;
       case 'mcp':
         return (
           <MCPServersTable
