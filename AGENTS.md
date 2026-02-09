@@ -290,25 +290,30 @@ AI-powered prompt generation and library system. Generates well-structured promp
 
 ```
 packages/core/src/
-├── types/prompt-template.ts       # All types (PromptTemplate, versions, ratings, architect I/O)
+├── types/prompt-template.ts       # All types (PromptTemplate, versions, ratings, preprocessors, architect I/O)
 ├── prompts/architect.ts           # System prompts + buildArchitectMessages helpers
 └── db/
-    ├── schema.sqlite.ts           # 3 tables: prompt_templates, prompt_template_versions, prompt_ratings
+    ├── schema.sqlite.ts           # 4 tables: prompt_templates, prompt_template_versions, prompt_ratings, template_preprocessors
     ├── schema.postgres.ts         # Mirror of above for Postgres
     ├── schema.ts                  # Re-exports
     └── repositories/
         ├── prompt-templates.ts    # CRUD + versioning + usage tracking
-        └── prompt-ratings.ts      # CRUD + avg calculation
+        ├── prompt-ratings.ts      # CRUD + avg calculation
+        └── template-preprocessors.ts  # Junction table: template ↔ preprocessor relationships
 
 apps/agor-daemon/src/services/
 ├── prompt-architect.ts            # AI generation (clarify/generate — dual backend: API key or Agent SDK OAuth)
 ├── prompt-templates.ts            # CRUD + auto-versioning + quality scoring
-└── prompt-ratings.ts              # CRUD + auto avg_rating recalculation
+├── prompt-ratings.ts              # CRUD + auto avg_rating recalculation
+└── template-preprocessors.ts      # Junction CRUD: find/create(bulk set)/remove
 
-apps/agor-ui/src/components/
-├── PromptArchitect/               # Modal (Describe→Clarify→Review) + trigger button
-├── PromptLibrary/                 # Drawer panel, TemplateCard, search, version history
-└── PromptRating/                  # Inline rating widget for sessions
+apps/agor-ui/src/
+├── components/
+│   ├── PromptArchitect/           # Modal (Describe→Clarify→Review) + trigger button
+│   ├── PromptLibrary/             # Drawer panel, TemplateCard, search, version history, PreprocessorPicker
+│   └── PromptRating/              # Inline rating widget for sessions
+└── utils/
+    └── composeTemplate.ts         # Client-side composition of main template + preprocessor fragments
 ```
 
 ### API Endpoints
@@ -318,16 +323,35 @@ apps/agor-ui/src/components/
 | `/prompt-architect` | POST | `{ action: 'clarify'\|'generate', description, target }` |
 | `/prompt-templates` | CRUD | Templates with auto-versioning on patch |
 | `/prompt-ratings` | CRUD | Ratings (recalculates template avg_rating) |
+| `/template-preprocessors` | find/create/remove | Junction: `{ template_id, preprocessor_ids[] }` |
 
 ### UI Integration Points
 
-- **ZoneConfigModal** — "Architect" button next to Trigger Template (target: zone)
-- **NewSessionModal** — "Architect" button + "Library" button in Initial Prompt label (target: session); Library drawer opens with `defaultCategory="session"` pre-filter
+- **ZoneConfigModal** — "Architect" button next to Trigger Template (target: zone); PreprocessorPicker below trigger template; `preprocessor_ids` saved in ZoneTrigger
+- **NewSessionModal** — "Architect" button + "Library" button in Initial Prompt label (target: session); Library drawer opens with `defaultCategory="session"` pre-filter; PreprocessorPicker below initial prompt composes at session creation
 - **AppHeader** — Library book icon button → opens PromptLibraryPanel drawer
 - **App.tsx** — `libraryPanelOpen` state manages the drawer; `pendingPromptInsert` state wires "Use" action to SessionPanel input
 - **SessionPanel** — Consumes `pendingPromptInsert` via useEffect to populate prompt input; "Reset Conversation" button (ReloadOutlined) clears `sdk_session_id` to recover from stale SDK sessions
-- **PromptArchitectModal** — Review step has editable title (Input), preview/edit toggle for template, saves `description` from Describe step
+- **PromptArchitectModal** — Review step has editable title (Input), preview/edit toggle for template, saves `description` from Describe step; PreprocessorPicker in Review step for non-preprocessor templates; composes on "Use This Prompt"; saves preprocessor associations after template save
 - **PromptLibraryPanel** — Accepts `defaultCategory` prop for pre-filtered category views; `onUseTemplate` callback inserts into active session or copies to clipboard
+- **TemplatesTable** (Settings) — When editing a preprocessor template: shows Preprocessor Type dropdown, Compatible Categories multi-select, Insertion Mode radio
+
+### Pre-Process Prompts (Composable Fragments)
+
+Preprocessors are templates with `category='preprocessor'` — reusable building blocks that compose with other templates at use time.
+
+**Categories:** `session | zone | scheduler | generic | preprocessor`
+
+**Preprocessor Types:** `github_issue | plan | environment | scheduling | reference | custom`
+
+**PreprocessorMetadata** (stored in template `metadata` JSON):
+- `preprocessor_type` — sub-type classification
+- `compatible_categories` — which template categories this preprocessor works with (empty = all)
+- `insertion_mode` — `'before'` (default) or `'after'` the main template
+
+**Composition:** `composeTemplate(mainTemplate, preprocessors[])` joins fragments with `\n\n---\n\n` separators, respecting insertion_mode ordering.
+
+**PreprocessorPicker component:** Collapsible checklist with type badges, description snippets, up/down reordering buttons, filtered by `compatible_categories` when `targetCategory` prop is provided.
 
 ### Quality Scoring
 
