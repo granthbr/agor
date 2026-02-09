@@ -34,6 +34,7 @@ export default defineConfig({
     'unix/index': 'src/unix/index.ts', // Unix group management utilities for worktree isolation
     'mcp/index': 'src/mcp/index.ts', // MCP template resolution utilities
     'prompts/architect': 'src/prompts/architect.ts', // Prompt Architect system prompt and helpers
+    'gateway/index': 'src/gateway/index.ts', // Gateway platform connectors (Slack, etc.)
   },
   format: ['cjs', 'esm'],
   dts: true,
@@ -47,6 +48,8 @@ export default defineConfig({
     '@google/gemini-cli-core',
     '@google/genai',
     '@opencode-ai/sdk',
+    '@slack/web-api',
+    '@slack/socket-mode',
     'node:fs',
     'node:fs/promises',
     'node:path',

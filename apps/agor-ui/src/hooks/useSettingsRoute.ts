@@ -11,6 +11,7 @@ export type SettingsSection =
   | 'templates'
   | 'mcp'
   | 'agentic-tools'
+  | 'gateway'
   | 'users'
   | 'about';
 
@@ -68,6 +69,7 @@ export function useSettingsRoute() {
       'templates',
       'mcp',
       'agentic-tools',
+      'gateway',
       'users',
       'about',
     ];

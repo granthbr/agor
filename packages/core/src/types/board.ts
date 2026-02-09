@@ -1,3 +1,4 @@
+import type { AgenticToolName } from './agentic-tool';
 import type { BoardID, WorktreeID } from './id';
 
 /**
@@ -65,6 +66,8 @@ export interface ZoneTrigger {
   behavior: ZoneTriggerBehavior;
   /** Optional preprocessor template IDs to compose with trigger template */
   preprocessor_ids?: string[];
+  /** Preferred agent for auto-created sessions (default: 'claude-code') */
+  agent?: AgenticToolName;
 }
 
 /**

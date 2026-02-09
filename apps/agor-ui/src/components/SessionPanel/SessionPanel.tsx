@@ -859,7 +859,6 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
             }}
             initialFiles={droppedFiles}
             onUploadComplete={(files) => {
-              console.log('Files uploaded:', files);
               message.success(`Uploaded ${files.length} file(s)`);
             }}
             onInsertMention={(filepath) => {

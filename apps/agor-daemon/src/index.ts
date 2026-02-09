@@ -311,6 +311,7 @@ import type {
   SessionsServiceImpl,
   TasksServiceImpl,
 } from './declarations';
+import { gatewayRouteHook } from './hooks/gateway-route';
 import { createBoardCommentsService } from './services/board-comments';
 import { createBoardObjectsService } from './services/board-objects';
 import { createBoardsService } from './services/boards';
@@ -318,6 +319,8 @@ import { createConfigService } from './services/config';
 import { createContextService } from './services/context';
 import { createFileService } from './services/file';
 import { createFilesService } from './services/files';
+import { createGatewayService, type GatewayService } from './services/gateway';
+import { createGatewayChannelsService } from './services/gateway-channels';
 import { createHealthMonitor } from './services/health-monitor';
 import { createLeaderboardService } from './services/leaderboard';
 import { createMCPServersService } from './services/mcp-servers';
@@ -332,6 +335,7 @@ import { createSessionsService } from './services/sessions';
 import { createTasksService } from './services/tasks';
 import { createTemplatePreprocessorsService } from './services/template-preprocessors';
 import { TerminalsService } from './services/terminals';
+import { createThreadSessionMapService } from './services/thread-session-map';
 import { createUsersService } from './services/users';
 import { setupWorktreeOwnersService } from './services/worktree-owners.js';
 import { createWorktreesService } from './services/worktrees';
@@ -654,8 +658,8 @@ async function main() {
 
   // Wire up custom session methods for Feathers/WebSocket executor architecture
   sessionsService.setExecuteHandler(async (sessionId, data, params) => {
-    // Import spawn, execSync and path utilities
-    const { spawn, execSync } = await import('node:child_process');
+    // Import spawn and path utilities
+    const { spawn } = await import('node:child_process');
     const path = await import('node:path');
     const { fileURLToPath } = await import('node:url');
 
@@ -777,22 +781,16 @@ async function main() {
     const userId = (params as AuthenticatedParams).user?.user_id as
       | import('@agor/core/types').UserID
       | undefined;
-    const executorEnv = await createUserProcessEnvironment(userId, db);
+    // When impersonating, strip HOME/USER/LOGNAME/SHELL so sudo -u can set them
+    const executorEnv = await createUserProcessEnvironment(
+      userId,
+      db,
+      undefined,
+      !!executorUnixUser
+    );
 
     // Add DAEMON_URL to environment so executor can connect back
     executorEnv.DAEMON_URL = daemonUrl;
-
-    // When impersonating, override HOME to use impersonated user's home directory
-    if (executorUnixUser) {
-      // Get impersonated user's home directory from /etc/passwd
-      const userHomeDir = execSync(`getent passwd "${executorUnixUser}" | cut -d: -f6`, {
-        encoding: 'utf8',
-      }).trim();
-
-      // Override HOME with impersonated user's home directory
-      // Keep everything else from createUserProcessEnvironment (user env vars, API keys, etc.)
-      executorEnv.HOME = userHomeDir || executorEnv.HOME;
-    }
 
     // =========================================================================
     // PHASE 4: JSON-OVER-STDIN WITH IMPERSONATION AT SPAWN
@@ -1456,44 +1454,10 @@ async function main() {
 
         const mcpServerRepo = new MCPServerRepository(db);
 
-        // SSRF Protection: Validate URLs to prevent internal network access
+        // Validate URL format and protocol
         const validateUrl = (url: string): { valid: boolean; error?: string } => {
           try {
             const parsed = new URL(url);
-            const hostname = parsed.hostname.toLowerCase();
-
-            // Block localhost and loopback
-            if (
-              hostname === 'localhost' ||
-              hostname === '127.0.0.1' ||
-              hostname === '::1' ||
-              hostname === '0.0.0.0'
-            ) {
-              return { valid: false, error: 'Connection to localhost is not allowed' };
-            }
-
-            // Block private IP ranges (10.x.x.x, 172.16-31.x.x, 192.168.x.x)
-            const ipv4Match = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-            if (ipv4Match) {
-              const [, a, b] = ipv4Match.map(Number);
-              if (
-                a === 10 ||
-                (a === 172 && b >= 16 && b <= 31) ||
-                (a === 192 && b === 168) ||
-                a === 169 // link-local
-              ) {
-                return { valid: false, error: 'Connection to private IP addresses is not allowed' };
-              }
-            }
-
-            // Block common internal hostnames
-            if (
-              hostname.endsWith('.local') ||
-              hostname.endsWith('.internal') ||
-              hostname.endsWith('.lan')
-            ) {
-              return { valid: false, error: 'Connection to internal hostnames is not allowed' };
-            }
 
             // Only allow http/https
             if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
@@ -1969,6 +1933,13 @@ async function main() {
     },
   });
 
+  // Register gateway services
+  app.use('/gateway-channels', createGatewayChannelsService(db));
+  app.use('/thread-session-map', createThreadSessionMapService(db));
+  app.use('/gateway', createGatewayService(db, app), {
+    methods: ['create', 'routeMessage'],
+  });
+
   // Register config service for API key management
   const configService = createConfigService(db);
   // Store app reference for service method access
@@ -2100,6 +2071,7 @@ async function main() {
       ],
     },
     after: {
+      create: [gatewayRouteHook],
       patch: [
         async (context: HookContext<Board>) => {
           // Detect permission resolution and notify executor via IPC
@@ -2445,6 +2417,61 @@ async function main() {
     },
   });
 
+  // Refresh the gateway's in-memory channel state when channels are mutated.
+  // This allows routeMessage() to skip DB lookups entirely when no channels exist.
+  const refreshGatewayChannelState = async (context: HookContext) => {
+    const gw = context.app.service('gateway') as unknown as GatewayService;
+    gw.refreshChannelState().catch((err: unknown) =>
+      console.warn('[gateway] Failed to refresh channel state:', err)
+    );
+    return context;
+  };
+
+  app.service('gateway-channels').hooks({
+    before: {
+      all: [requireAuth],
+      create: [requireMinimumRole('member', 'create gateway channels')],
+      patch: [requireMinimumRole('member', 'update gateway channels')],
+      remove: [requireMinimumRole('member', 'delete gateway channels')],
+    },
+    after: {
+      all: [
+        // Redact sensitive config fields in API responses
+        async (context: HookContext) => {
+          const redact = (channel: Record<string, unknown>) => {
+            if (channel?.config && typeof channel.config === 'object') {
+              const config = { ...(channel.config as Record<string, unknown>) };
+              for (const field of ['bot_token', 'app_token', 'signing_secret']) {
+                if (config[field]) {
+                  config[field] = '••••••••';
+                }
+              }
+              channel.config = config;
+            }
+          };
+          if (Array.isArray(context.result?.data)) {
+            for (const item of context.result.data) redact(item);
+          } else if (context.result) {
+            redact(context.result as Record<string, unknown>);
+          }
+          return context;
+        },
+      ],
+      create: [refreshGatewayChannelState],
+      patch: [refreshGatewayChannelState],
+      remove: [refreshGatewayChannelState],
+    },
+  });
+
+  app.service('thread-session-map').hooks({
+    before: {
+      all: [requireAuth],
+    },
+  });
+
+  // Gateway service create (postMessage) authenticates via channel_key, not user auth
+  // No hooks needed — auth is handled internally by the service
+
   app.service('config').hooks({
     before: {
       all: [requireAuth],
@@ -2567,18 +2594,26 @@ async function main() {
       // After user create/patch: optionally ensure Unix user exists and sync password
       create: [
         async (context: HookContext) => {
-          // Skip Unix sync if RBAC is disabled
-          if (!worktreeRbacEnabled || !jwtSecret) {
+          // Need JWT secret for service tokens (required by executor)
+          if (!jwtSecret) {
             return context;
           }
 
           const user = context.result as User;
           if (!user.unix_username) {
-            return context; // No unix_username set, skip Unix user creation
+            return context; // No unix_username set, skip Unix operations
           }
 
           // Get plaintext password from request data (for password sync)
           const data = context.data as { password?: string };
+
+          // Respect sync_unix_passwords config (defaults to true)
+          // When false, skip all Unix sync operations (user creation, groups, password)
+          const shouldSync = config.execution?.sync_unix_passwords ?? true;
+
+          if (!shouldSync) {
+            return context;
+          }
 
           // Fire-and-forget sync to executor
           console.log(`[Unix Integration] Syncing Unix user for: ${user.unix_username}`);
@@ -2602,8 +2637,8 @@ async function main() {
       ],
       patch: [
         async (context: HookContext) => {
-          // Skip Unix sync if RBAC is disabled
-          if (!worktreeRbacEnabled || !jwtSecret) {
+          // Need JWT secret for service tokens (required by executor)
+          if (!jwtSecret) {
             return context;
           }
 
@@ -2612,6 +2647,19 @@ async function main() {
 
           // Only sync if unix_username or password changed
           if (!data?.unix_username && !data?.password) {
+            return context;
+          }
+
+          // Skip if user doesn't have unix_username (would fail in executor anyway)
+          if (!user.unix_username) {
+            return context;
+          }
+
+          // Respect sync_unix_passwords config (defaults to true)
+          // When false, skip all Unix sync operations (user creation, groups, password)
+          const shouldSync = config.execution?.sync_unix_passwords ?? true;
+
+          if (!shouldSync) {
             return context;
           }
 
@@ -4890,53 +4938,137 @@ async function main() {
   );
 
   // POST /worktrees/:id/archive-or-delete - Archive or delete worktree
-  registerAuthenticatedRoute(
-    app,
-    '/worktrees/:id/archive-or-delete',
-    {
-      async create(data: unknown, params: RouteParams) {
-        const id = params.route?.id;
-        if (!id) throw new Error('Worktree ID required');
-        const options = data as {
-          metadataAction: 'archive' | 'delete';
-          filesystemAction: 'preserved' | 'cleaned' | 'deleted';
-        };
-        return worktreesService.archiveOrDelete(
-          id as import('@agor/core/types').WorktreeID,
-          options,
-          params
-        );
-      },
-      // biome-ignore lint/suspicious/noExplicitAny: Service type not compatible with Express
-    } as any,
-    {
-      create: { role: 'admin', action: 'archive or delete worktrees' },
+  app.use('/worktrees/:id/archive-or-delete', {
+    async create(data: unknown, params: RouteParams) {
+      const id = params.route?.id;
+      if (!id) throw new Error('Worktree ID required');
+      const options = data as {
+        metadataAction: 'archive' | 'delete';
+        filesystemAction: 'preserved' | 'cleaned' | 'deleted';
+      };
+      return worktreesService.archiveOrDelete(
+        id as import('@agor/core/types').WorktreeID,
+        options,
+        params
+      );
     },
-    requireAuth
-  );
+  });
+
+  // Add RBAC hooks for archive-or-delete route
+  app.service('/worktrees/:id/archive-or-delete').hooks({
+    before: {
+      create: [
+        requireAuth,
+        requireMinimumRole('member', 'archive or delete worktrees'),
+        // Load worktree from route param and check ownership (always run, even if RBAC disabled)
+        async (context: HookContext) => {
+          const id = context.params.route?.id;
+          if (!id) throw new Error('Worktree ID required');
+
+          const worktree = await worktreeRepository.findById(id);
+          if (!worktree) {
+            throw new Forbidden(`Worktree not found: ${id}`);
+          }
+
+          // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+          const userId = (context.params as any).user?.user_id;
+          const isOwner = userId
+            ? await worktreeRepository.isOwner(worktree.worktree_id, userId)
+            : false;
+
+          // Cache for downstream hooks
+          // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+          (context.params as any).worktree = worktree;
+          // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+          (context.params as any).isWorktreeOwner = isOwner;
+
+          return context;
+        },
+        // Always enforce ownership check (even when RBAC disabled)
+        worktreeRbacEnabled
+          ? ensureWorktreePermission('all', 'archive or delete worktrees')
+          : (context: HookContext) => {
+              // When RBAC disabled, still require worktree ownership OR admin role
+              // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+              const isOwner = (context.params as any).isWorktreeOwner;
+              // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+              const userRole = (context.params as any).user?.role;
+
+              if (!isOwner && userRole !== 'admin' && userRole !== 'owner') {
+                throw new Forbidden(
+                  'You must be the worktree owner or a global admin to archive/delete worktrees'
+                );
+              }
+              return context;
+            },
+      ],
+    },
+  });
 
   // POST /worktrees/:id/unarchive - Unarchive worktree
-  registerAuthenticatedRoute(
-    app,
-    '/worktrees/:id/unarchive',
-    {
-      async create(data: unknown, params: RouteParams) {
-        const id = params.route?.id;
-        if (!id) throw new Error('Worktree ID required');
-        const options = data as { boardId?: import('@agor/core/types').BoardID };
-        return worktreesService.unarchive(
-          id as import('@agor/core/types').WorktreeID,
-          options,
-          params
-        );
-      },
-      // biome-ignore lint/suspicious/noExplicitAny: Service type not compatible with Express
-    } as any,
-    {
-      create: { role: 'admin', action: 'unarchive worktrees' },
+  app.use('/worktrees/:id/unarchive', {
+    async create(data: unknown, params: RouteParams) {
+      const id = params.route?.id;
+      if (!id) throw new Error('Worktree ID required');
+      const options = data as { boardId?: import('@agor/core/types').BoardID };
+      return worktreesService.unarchive(
+        id as import('@agor/core/types').WorktreeID,
+        options,
+        params
+      );
     },
-    requireAuth
-  );
+  });
+
+  // Add RBAC hooks for unarchive route
+  app.service('/worktrees/:id/unarchive').hooks({
+    before: {
+      create: [
+        requireAuth,
+        requireMinimumRole('member', 'unarchive worktrees'),
+        // Load worktree from route param and check ownership (always run, even if RBAC disabled)
+        async (context: HookContext) => {
+          const id = context.params.route?.id;
+          if (!id) throw new Error('Worktree ID required');
+
+          const worktree = await worktreeRepository.findById(id);
+          if (!worktree) {
+            throw new Forbidden(`Worktree not found: ${id}`);
+          }
+
+          // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+          const userId = (context.params as any).user?.user_id;
+          const isOwner = userId
+            ? await worktreeRepository.isOwner(worktree.worktree_id, userId)
+            : false;
+
+          // Cache for downstream hooks
+          // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+          (context.params as any).worktree = worktree;
+          // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+          (context.params as any).isWorktreeOwner = isOwner;
+
+          return context;
+        },
+        // Always enforce ownership check (even when RBAC disabled)
+        worktreeRbacEnabled
+          ? ensureWorktreePermission('all', 'unarchive worktrees')
+          : (context: HookContext) => {
+              // When RBAC disabled, still require worktree ownership OR admin role
+              // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+              const isOwner = (context.params as any).isWorktreeOwner;
+              // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+              const userRole = (context.params as any).user?.role;
+
+              if (!isOwner && userRole !== 'admin' && userRole !== 'owner') {
+                throw new Forbidden(
+                  'You must be the worktree owner or a global admin to unarchive worktrees'
+                );
+              }
+              return context;
+            },
+      ],
+    },
+  });
 
   // GET /worktrees/logs?worktree_id=xxx - Get environment logs
   registerAuthenticatedRoute(
@@ -5442,9 +5574,21 @@ async function main() {
     tickInterval: 30000, // 30 seconds
     gracePeriod: 120000, // 2 minutes
     debug: process.env.NODE_ENV !== 'production',
+    unixUserMode: config.execution?.unix_user_mode ?? 'simple',
   });
   schedulerService.start();
   console.log(`🔄 Scheduler started (tick interval: 30s)`);
+
+  // Initialize gateway: refresh channel state cache, then start Socket Mode listeners
+  const gatewayService = app.service('gateway') as unknown as GatewayService;
+  gatewayService
+    .refreshChannelState()
+    .then(() => {
+      return gatewayService.startListeners();
+    })
+    .catch((error: unknown) => {
+      console.error('[gateway] Failed to start listeners:', error);
+    });
 
   // Graceful shutdown handler
   const shutdown = async (signal: string) => {
@@ -5457,6 +5601,10 @@ async function main() {
       // Clean up terminal sessions
       console.log('🖥️  Cleaning up terminal sessions...');
       terminalsService.cleanup();
+
+      // Stop gateway listeners
+      console.log('🌐 Stopping gateway listeners...');
+      await gatewayService.stopListeners();
 
       // Stop scheduler
       console.log('🔄 Stopping scheduler...');

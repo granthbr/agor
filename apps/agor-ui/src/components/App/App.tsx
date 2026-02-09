@@ -5,6 +5,7 @@ import type {
   BoardEntityObject,
   BoardID,
   CreateUserInput,
+  GatewayChannel,
   MCPServer,
   PermissionMode,
   Repo,
@@ -122,6 +123,10 @@ export interface AppProps {
   onCreateMCPServer?: (data: Partial<MCPServer>) => void;
   onUpdateMCPServer?: (mcpServerId: string, updates: Partial<MCPServer>) => void;
   onDeleteMCPServer?: (mcpServerId: string) => void;
+  gatewayChannelById: Map<string, GatewayChannel>;
+  onCreateGatewayChannel?: (data: Partial<GatewayChannel>) => void;
+  onUpdateGatewayChannel?: (channelId: string, updates: Partial<GatewayChannel>) => void;
+  onDeleteGatewayChannel?: (channelId: string) => void;
   onUpdateSessionMcpServers?: (sessionId: string, mcpServerIds: string[]) => void;
   onSendComment?: (boardId: string, content: string) => void;
   onReplyComment?: (parentId: string, content: string) => void;
@@ -185,6 +190,10 @@ export const App: React.FC<AppProps> = ({
   onCreateMCPServer,
   onUpdateMCPServer,
   onDeleteMCPServer,
+  gatewayChannelById,
+  onCreateGatewayChannel,
+  onUpdateGatewayChannel,
+  onDeleteGatewayChannel,
   onUpdateSessionMcpServers,
   onSendComment,
   onReplyComment,
@@ -315,9 +324,16 @@ export const App: React.FC<AppProps> = ({
   });
 
   // Wrapper to update board ID (updates both state and URL via hook)
-  const setCurrentBoardId = useCallback((boardId: string) => {
-    setCurrentBoardIdInternal(boardId);
-  }, []);
+  // Also closes conversation panel when switching to a different board
+  const setCurrentBoardId = useCallback(
+    (boardId: string) => {
+      if (boardId !== currentBoardId) {
+        setSelectedSessionId(null);
+      }
+      setCurrentBoardIdInternal(boardId);
+    },
+    [currentBoardId]
+  );
 
   // If the stored board no longer exists (e.g., deleted), fallback to first board
   useEffect(() => {
@@ -362,7 +378,6 @@ export const App: React.FC<AppProps> = ({
   };
 
   const handleCreateSession = async (config: NewSessionConfig) => {
-    console.log('Creating session with config:', config, 'for board:', currentBoardId);
     const sessionId = await onCreateSession?.(config, currentBoardId);
     setNewSessionWorktreeId(null);
 
@@ -421,10 +436,6 @@ export const App: React.FC<AppProps> = ({
       if (!client) return;
 
       try {
-        console.log(
-          `📋 Permission decision: ${allow ? 'ALLOW' : 'DENY'} (${scope}) for task ${taskId}`
-        );
-
         // Call the permission decision endpoint
         await client.service(`sessions/${sessionId}/permission-decision`).create({
           requestId,
@@ -435,8 +446,6 @@ export const App: React.FC<AppProps> = ({
           scope,
           decidedBy: user?.user_id || 'anonymous',
         });
-
-        console.log(`✅ Permission decision sent successfully`);
       } catch (error) {
         console.error('❌ Failed to send permission decision:', error);
       }
@@ -915,6 +924,10 @@ export const App: React.FC<AppProps> = ({
             onCreateMCPServer={onCreateMCPServer}
             onUpdateMCPServer={onUpdateMCPServer}
             onDeleteMCPServer={onDeleteMCPServer}
+            gatewayChannelById={gatewayChannelById}
+            onCreateGatewayChannel={onCreateGatewayChannel}
+            onUpdateGatewayChannel={onUpdateGatewayChannel}
+            onDeleteGatewayChannel={onDeleteGatewayChannel}
           />
           {sessionSettingsSession && (
             <SessionSettingsModal

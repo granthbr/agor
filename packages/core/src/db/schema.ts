@@ -36,6 +36,8 @@ export const promptTemplates = schema.promptTemplates;
 export const promptTemplateVersions = schema.promptTemplateVersions;
 export const promptRatings = schema.promptRatings;
 export const templatePreprocessors = schema.templatePreprocessors;
+export const gatewayChannels = schema.gatewayChannels;
+export const threadSessionMap = schema.threadSessionMap;
 
 // Re-export all types
 export type * from './schema.sqlite';

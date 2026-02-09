@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "c1db766d-e5e6-4a21-ad2f-b8d2aaff00b9",
-  "prevId": "359d86a9-aa86-4bb5-824c-ed9cdc75d883",
+  "id": "44ddfbe7-b96a-47f0-9bad-ef88901ffbba",
+  "prevId": "74438fd5-1927-459b-a398-8b8caa17d7fd",
   "tables": {
     "board_comments": {
       "name": "board_comments",
@@ -373,6 +373,135 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "gateway_channels": {
+      "name": "gateway_channels",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text(36)",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text(36)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'anonymous'"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "channel_type": {
+          "name": "channel_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "target_worktree_id": {
+          "name": "target_worktree_id",
+          "type": "text(36)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "agor_user_id": {
+          "name": "agor_user_id",
+          "type": "text(36)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "channel_key": {
+          "name": "channel_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "last_message_at": {
+          "name": "last_message_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "config": {
+          "name": "config",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "agentic_config": {
+          "name": "agentic_config",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "gateway_channels_channel_key_unique": {
+          "name": "gateway_channels_channel_key_unique",
+          "columns": ["channel_key"],
+          "isUnique": true
+        },
+        "idx_gateway_channel_key": {
+          "name": "idx_gateway_channel_key",
+          "columns": ["channel_key"],
+          "isUnique": false
+        },
+        "idx_gateway_enabled_type": {
+          "name": "idx_gateway_enabled_type",
+          "columns": ["enabled", "channel_type"],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "gateway_channels_target_worktree_id_worktrees_worktree_id_fk": {
+          "name": "gateway_channels_target_worktree_id_worktrees_worktree_id_fk",
+          "tableFrom": "gateway_channels",
+          "tableTo": "worktrees",
+          "columnsFrom": ["target_worktree_id"],
+          "columnsTo": ["worktree_id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "mcp_servers": {
       "name": "mcp_servers",
       "columns": {
@@ -608,357 +737,6 @@
           "tableTo": "tasks",
           "columnsFrom": ["task_id"],
           "columnsTo": ["task_id"],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "prompt_ratings": {
-      "name": "prompt_ratings",
-      "columns": {
-        "rating_id": {
-          "name": "rating_id",
-          "type": "text(36)",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "template_id": {
-          "name": "template_id",
-          "type": "text(36)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "session_id": {
-          "name": "session_id",
-          "type": "text(36)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "rated_by": {
-          "name": "rated_by",
-          "type": "text(36)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'anonymous'"
-        },
-        "rating": {
-          "name": "rating",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "feedback": {
-          "name": "feedback",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "prompt_ratings_template_idx": {
-          "name": "prompt_ratings_template_idx",
-          "columns": ["template_id"],
-          "isUnique": false
-        },
-        "prompt_ratings_session_idx": {
-          "name": "prompt_ratings_session_idx",
-          "columns": ["session_id"],
-          "isUnique": false
-        },
-        "prompt_ratings_rated_by_idx": {
-          "name": "prompt_ratings_rated_by_idx",
-          "columns": ["rated_by"],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "prompt_ratings_template_id_prompt_templates_template_id_fk": {
-          "name": "prompt_ratings_template_id_prompt_templates_template_id_fk",
-          "tableFrom": "prompt_ratings",
-          "tableTo": "prompt_templates",
-          "columnsFrom": ["template_id"],
-          "columnsTo": ["template_id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "prompt_ratings_session_id_sessions_session_id_fk": {
-          "name": "prompt_ratings_session_id_sessions_session_id_fk",
-          "tableFrom": "prompt_ratings",
-          "tableTo": "sessions",
-          "columnsFrom": ["session_id"],
-          "columnsTo": ["session_id"],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "prompt_template_versions": {
-      "name": "prompt_template_versions",
-      "columns": {
-        "version_id": {
-          "name": "version_id",
-          "type": "text(36)",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "template_id": {
-          "name": "template_id",
-          "type": "text(36)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "template": {
-          "name": "template",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "variables": {
-          "name": "variables",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "change_note": {
-          "name": "change_note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_by": {
-          "name": "created_by",
-          "type": "text(36)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'anonymous'"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "prompt_template_versions_template_idx": {
-          "name": "prompt_template_versions_template_idx",
-          "columns": ["template_id"],
-          "isUnique": false
-        },
-        "prompt_template_versions_version_idx": {
-          "name": "prompt_template_versions_version_idx",
-          "columns": ["template_id", "version"],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "prompt_template_versions_template_id_prompt_templates_template_id_fk": {
-          "name": "prompt_template_versions_template_id_prompt_templates_template_id_fk",
-          "tableFrom": "prompt_template_versions",
-          "tableTo": "prompt_templates",
-          "columnsFrom": ["template_id"],
-          "columnsTo": ["template_id"],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "prompt_templates": {
-      "name": "prompt_templates",
-      "columns": {
-        "template_id": {
-          "name": "template_id",
-          "type": "text(36)",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "board_id": {
-          "name": "board_id",
-          "type": "text(36)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_by": {
-          "name": "created_by",
-          "type": "text(36)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'anonymous'"
-        },
-        "title": {
-          "name": "title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "description": {
-          "name": "description",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "category": {
-          "name": "category",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "template": {
-          "name": "template",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "variables": {
-          "name": "variables",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "metadata": {
-          "name": "metadata",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 1
-        },
-        "parent_id": {
-          "name": "parent_id",
-          "type": "text(36)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "is_latest": {
-          "name": "is_latest",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": true
-        },
-        "usage_count": {
-          "name": "usage_count",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "avg_rating": {
-          "name": "avg_rating",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "prompt_templates_board_idx": {
-          "name": "prompt_templates_board_idx",
-          "columns": ["board_id"],
-          "isUnique": false
-        },
-        "prompt_templates_category_idx": {
-          "name": "prompt_templates_category_idx",
-          "columns": ["category"],
-          "isUnique": false
-        },
-        "prompt_templates_created_by_idx": {
-          "name": "prompt_templates_created_by_idx",
-          "columns": ["created_by"],
-          "isUnique": false
-        },
-        "prompt_templates_parent_idx": {
-          "name": "prompt_templates_parent_idx",
-          "columns": ["parent_id"],
-          "isUnique": false
-        },
-        "prompt_templates_is_latest_idx": {
-          "name": "prompt_templates_is_latest_idx",
-          "columns": ["is_latest"],
-          "isUnique": false
-        },
-        "prompt_templates_created_idx": {
-          "name": "prompt_templates_created_idx",
-          "columns": ["created_at"],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "prompt_templates_board_id_boards_board_id_fk": {
-          "name": "prompt_templates_board_id_boards_board_id_fk",
-          "tableFrom": "prompt_templates",
-          "tableTo": "boards",
-          "columnsFrom": ["board_id"],
-          "columnsTo": ["board_id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -1394,30 +1172,15 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "template_preprocessors": {
-      "name": "template_preprocessors",
+    "thread_session_map": {
+      "name": "thread_session_map",
       "columns": {
-        "template_id": {
-          "name": "template_id",
+        "id": {
+          "name": "id",
           "type": "text(36)",
-          "primaryKey": false,
+          "primaryKey": true,
           "notNull": true,
           "autoincrement": false
-        },
-        "preprocessor_id": {
-          "name": "preprocessor_id",
-          "type": "text(36)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "sort_order": {
-          "name": "sort_order",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
         },
         "created_at": {
           "name": "created_at",
@@ -1425,46 +1188,105 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "last_message_at": {
+          "name": "last_message_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "channel_id": {
+          "name": "channel_id",
+          "type": "text(36)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "thread_id": {
+          "name": "thread_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "text(36)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "worktree_id": {
+          "name": "worktree_id",
+          "type": "text(36)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'active'"
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
-        "template_preprocessors_template_idx": {
-          "name": "template_preprocessors_template_idx",
-          "columns": ["template_id"],
+        "uniq_thread_map_channel_thread": {
+          "name": "uniq_thread_map_channel_thread",
+          "columns": ["channel_id", "thread_id"],
           "isUnique": false
         },
-        "template_preprocessors_preprocessor_idx": {
-          "name": "template_preprocessors_preprocessor_idx",
-          "columns": ["preprocessor_id"],
+        "idx_thread_map_session_id": {
+          "name": "idx_thread_map_session_id",
+          "columns": ["session_id"],
+          "isUnique": false
+        },
+        "idx_thread_map_channel_status": {
+          "name": "idx_thread_map_channel_status",
+          "columns": ["channel_id", "status"],
           "isUnique": false
         }
       },
       "foreignKeys": {
-        "template_preprocessors_template_id_prompt_templates_template_id_fk": {
-          "name": "template_preprocessors_template_id_prompt_templates_template_id_fk",
-          "tableFrom": "template_preprocessors",
-          "tableTo": "prompt_templates",
-          "columnsFrom": ["template_id"],
-          "columnsTo": ["template_id"],
+        "thread_session_map_channel_id_gateway_channels_id_fk": {
+          "name": "thread_session_map_channel_id_gateway_channels_id_fk",
+          "tableFrom": "thread_session_map",
+          "tableTo": "gateway_channels",
+          "columnsFrom": ["channel_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "template_preprocessors_preprocessor_id_prompt_templates_template_id_fk": {
-          "name": "template_preprocessors_preprocessor_id_prompt_templates_template_id_fk",
-          "tableFrom": "template_preprocessors",
-          "tableTo": "prompt_templates",
-          "columnsFrom": ["preprocessor_id"],
-          "columnsTo": ["template_id"],
-          "onDelete": "cascade",
+        "thread_session_map_session_id_sessions_session_id_fk": {
+          "name": "thread_session_map_session_id_sessions_session_id_fk",
+          "tableFrom": "thread_session_map",
+          "tableTo": "sessions",
+          "columnsFrom": ["session_id"],
+          "columnsTo": ["session_id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "thread_session_map_worktree_id_worktrees_worktree_id_fk": {
+          "name": "thread_session_map_worktree_id_worktrees_worktree_id_fk",
+          "tableFrom": "thread_session_map",
+          "tableTo": "worktrees",
+          "columnsFrom": ["worktree_id"],
+          "columnsTo": ["worktree_id"],
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {
-        "template_preprocessors_template_id_preprocessor_id_pk": {
-          "columns": ["template_id", "preprocessor_id"],
-          "name": "template_preprocessors_template_id_preprocessor_id_pk"
-        }
-      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
