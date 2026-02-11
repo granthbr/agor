@@ -92,7 +92,7 @@ export const PromptLibraryPanel: React.FC<PromptLibraryPanelProps> = ({
         description: template.description,
         template: template.template,
         category: template.category,
-        variables: template.variables ? JSON.stringify(template.variables) : null,
+        variables: template.variables ?? null,
         parent_id: template.template_id,
         board_id: boardId ?? null,
         created_by: 'anonymous',

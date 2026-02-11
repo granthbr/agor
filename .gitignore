@@ -43,3 +43,12 @@ yarn-error.log*
 .agor/
 agor-state/
 apps/agor-desktop/out/
+
+# Private infrastructure / personal dev tools
+REMOTE.md
+sync-to-remote.sh
+.env.postgres
+.envrc
+agor-main-board.png
+batch-reprocessor-files.tar.gz
+batch-reprocessor-export/

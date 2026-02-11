@@ -161,8 +161,8 @@ export const TemplatesTable: React.FC<TemplatesTableProps> = ({ client, boardId 
         template: template.template,
         description: template.description,
         category: template.category,
-        variables: template.variables ? JSON.stringify(template.variables) : null,
-        metadata: template.metadata ? JSON.stringify(template.metadata) : null,
+        variables: template.variables ?? null,
+        metadata: template.metadata ?? null,
         parent_id: template.template_id,
         board_id: template.board_id ?? boardId ?? null,
         created_by: 'anonymous',
@@ -232,7 +232,7 @@ export const TemplatesTable: React.FC<TemplatesTableProps> = ({ client, boardId 
         category: values.category,
         template: values.template,
         change_note: values.change_note || null,
-        metadata: JSON.stringify(metadata),
+        metadata,
       });
       notification.success({ message: `Updated "${values.title}"` });
       setEditingTemplate(null);

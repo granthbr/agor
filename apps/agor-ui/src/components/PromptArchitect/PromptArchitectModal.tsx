@@ -171,12 +171,12 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
       template: result.template,
       description: description.trim() || null,
       category: target,
-      variables: result.variables_used ? JSON.stringify(result.variables_used) : null,
-      metadata: JSON.stringify({
+      variables: result.variables_used ?? null,
+      metadata: {
         original_description: description,
         clarifications: answers,
         target,
-      }),
+      },
       board_id: boardId ?? null,
       created_by: 'anonymous',
     };

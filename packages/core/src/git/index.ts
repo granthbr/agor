@@ -10,7 +10,7 @@
 
 import { existsSync } from 'node:fs';
 import { mkdir, stat } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { simpleGit } from 'simple-git';
 import { getReposDir, getWorktreesDir } from '../config/config-manager';
 
@@ -352,6 +352,13 @@ export async function createWorktree(
     throw new Error('repoPath is required but was null/undefined');
   }
 
+  if (!existsSync(repoPath)) {
+    throw new Error(
+      `Repository directory does not exist: ${repoPath}. ` +
+        'The repository may need to be re-cloned or the volume mount may be missing.'
+    );
+  }
+
   const git = createGit(repoPath, env);
 
   let fetchSucceeded = false;
@@ -421,6 +428,10 @@ export async function createWorktree(
     // For tags, the ref is the tag name; for branches, it's the (now updated) local branch
     args.push(ref);
   }
+
+  // Ensure parent directory of worktreePath exists (git worktree add creates the
+  // final directory but needs parents to exist)
+  await mkdir(dirname(worktreePath), { recursive: true });
 
   await git.raw(['worktree', 'add', ...args]);
 
