@@ -139,7 +139,7 @@ async function handlePromptPayload(
   if (payload.env && Object.keys(payload.env).length > 0) {
     console.log(`[executor] Applying ${Object.keys(payload.env).length} env vars from payload`);
     for (const [key, value] of Object.entries(payload.env)) {
-      process.env[key] = value;
+      process.env[key] = value as string;
     }
   }
 
@@ -162,6 +162,7 @@ async function handlePromptPayload(
     tool: payload.params.tool,
     permissionMode: payload.params.permissionMode,
     daemonUrl: payload.daemonUrl || 'http://localhost:3030',
+    messageSource: payload.params.messageSource,
   });
 
   await executor.start();

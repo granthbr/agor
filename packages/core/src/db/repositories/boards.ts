@@ -7,8 +7,10 @@
 import type { Board, BoardExportBlob, BoardObject, UUID } from '@agor/core/types';
 import { and, eq, like, ne } from 'drizzle-orm';
 import * as yaml from 'js-yaml';
+import { getBaseUrl } from '../../config/config-manager';
 import { formatShortId, generateId } from '../../lib/ids';
 import { generateSlug } from '../../lib/slugs';
+import { getBoardUrl } from '../../utils/url';
 import type { Database } from '../client';
 import { deleteFrom, insert, select, update } from '../database-wrapper';
 import { type BoardInsert, type BoardRow, boards } from '../schema';
@@ -27,8 +29,11 @@ export class BoardRepository implements BaseRepository<Board, Partial<Board>> {
 
   /**
    * Convert database row to Board type
+   *
+   * @param row - Database row
+   * @param baseUrl - Base URL for generating board URLs
    */
-  private rowToBoard(row: BoardRow): Board {
+  private rowToBoard(row: BoardRow, baseUrl?: string): Board {
     const data = row.data as {
       description?: string;
       color?: string;
@@ -38,15 +43,20 @@ export class BoardRepository implements BaseRepository<Board, Partial<Board>> {
       custom_context?: Record<string, unknown>;
     };
 
+    const boardId = row.board_id as UUID;
+    const slug = row.slug !== null ? row.slug : undefined;
+    const url = baseUrl ? getBoardUrl(boardId, slug, baseUrl) : '';
+
     return {
-      board_id: row.board_id as UUID,
+      board_id: boardId,
       name: row.name,
-      slug: row.slug !== null ? row.slug : undefined,
+      slug,
       created_at: new Date(row.created_at).toISOString(),
       last_updated: row.updated_at
         ? new Date(row.updated_at).toISOString()
         : new Date(row.created_at).toISOString(),
       created_by: row.created_by,
+      url,
       ...data,
     };
   }
@@ -154,6 +164,7 @@ export class BoardRepository implements BaseRepository<Board, Partial<Board>> {
   async create(data: Partial<Board>): Promise<Board> {
     try {
       const boardId = data.board_id ?? generateId();
+      const baseUrl = await getBaseUrl();
       let finalSlug: string | undefined;
 
       if (data.slug === null) {
@@ -185,7 +196,7 @@ export class BoardRepository implements BaseRepository<Board, Partial<Board>> {
         throw new RepositoryError('Failed to retrieve created board');
       }
 
-      return this.rowToBoard(row);
+      return this.rowToBoard(row, baseUrl);
     } catch (error) {
       if (error instanceof RepositoryError) throw error;
       throw new RepositoryError(
@@ -201,9 +212,10 @@ export class BoardRepository implements BaseRepository<Board, Partial<Board>> {
   async findById(id: string): Promise<Board | null> {
     try {
       const fullId = await this.resolveId(id);
+      const baseUrl = await getBaseUrl();
       const row = await select(this.db).from(boards).where(eq(boards.board_id, fullId)).one();
 
-      return row ? this.rowToBoard(row) : null;
+      return row ? this.rowToBoard(row, baseUrl) : null;
     } catch (error) {
       if (error instanceof EntityNotFoundError) return null;
       if (error instanceof AmbiguousIdError) throw error;
@@ -219,9 +231,10 @@ export class BoardRepository implements BaseRepository<Board, Partial<Board>> {
    */
   async findBySlug(slug: string): Promise<Board | null> {
     try {
+      const baseUrl = await getBaseUrl();
       const row = await select(this.db).from(boards).where(eq(boards.slug, slug)).one();
 
-      return row ? this.rowToBoard(row) : null;
+      return row ? this.rowToBoard(row, baseUrl) : null;
     } catch (error) {
       throw new RepositoryError(
         `Failed to find board by slug: ${error instanceof Error ? error.message : String(error)}`,
@@ -252,8 +265,9 @@ export class BoardRepository implements BaseRepository<Board, Partial<Board>> {
    */
   async findAll(): Promise<Board[]> {
     try {
+      const baseUrl = await getBaseUrl();
       const rows = await select(this.db).from(boards).all();
-      return rows.map((row: BoardRow) => this.rowToBoard(row));
+      return rows.map((row: BoardRow) => this.rowToBoard(row, baseUrl));
     } catch (error) {
       throw new RepositoryError(
         `Failed to find all boards: ${error instanceof Error ? error.message : String(error)}`,

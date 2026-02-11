@@ -1,7 +1,7 @@
 import type { AgorClient } from '@agor/core/api';
 import type { Board, Repo, Session, User, Worktree } from '@agor/core/types';
 import { DeleteOutlined, FolderOutlined, LinkOutlined } from '@ant-design/icons';
-import { Button, Descriptions, Form, Input, Select, Space, Typography } from 'antd';
+import { Button, Descriptions, Form, Input, Select, Space, Tooltip, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import { useThemedMessage } from '../../../utils/message';
 import { ArchiveDeleteWorktreeModal } from '../../ArchiveDeleteWorktreeModal';
@@ -94,7 +94,6 @@ export const GeneralTab: React.FC<GeneralTabProps> = ({
         setOwners(ownersResponse as User[]);
       } catch (_error) {
         // If RBAC is disabled or service not found, allow all edits
-        console.log('Could not load owners, allowing edits');
         setOwners([]);
       } finally {
         setLoadingOwners(false);
@@ -240,7 +239,28 @@ export const GeneralTab: React.FC<GeneralTabProps> = ({
               />
             </Form.Item>
 
-            <Form.Item label="Notes" labelCol={{ span: 6 }} wrapperCol={{ span: 18 }}>
+            <Form.Item
+              label={
+                <Space size={4}>
+                  <span>Notes</span>
+                  <Tooltip title="Markdown formatting supported (headings, bold, italic, lists, code blocks, etc.)">
+                    <span
+                      style={{
+                        fontSize: '10px',
+                        fontWeight: 'bold',
+                        fontFamily: 'monospace',
+                        opacity: 0.6,
+                        cursor: 'help',
+                      }}
+                    >
+                      MD
+                    </span>
+                  </Tooltip>
+                </Space>
+              }
+              labelCol={{ span: 6 }}
+              wrapperCol={{ span: 18 }}
+            >
               <TextArea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}

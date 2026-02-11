@@ -114,7 +114,7 @@ export const BasePayloadSchema = z.object({
   daemonUrl: z.string().url().optional(),
 
   /** Environment variables to inject */
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
 
   /** Data home directory override */
   dataHome: z.string().optional(),
@@ -140,6 +140,7 @@ export const PromptPayloadSchema = BasePayloadSchema.extend({
     tool: ToolTypeSchema,
     permissionMode: PermissionModeSchema.optional(),
     cwd: z.string(),
+    messageSource: z.enum(['gateway', 'agor']).optional(),
   }),
 });
 
@@ -238,6 +239,9 @@ export const GitWorktreeAddPayloadSchema = BasePayloadSchema.extend({
 
     /** Create new branch */
     createBranch: z.boolean().optional(),
+
+    /** Type of ref (branch or tag) */
+    refType: z.enum(['branch', 'tag']).optional(),
 
     /** Initialize Unix group for worktree isolation (default: false, requires RBAC enabled) */
     initUnixGroup: z.boolean().optional().default(false),

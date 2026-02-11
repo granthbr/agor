@@ -442,10 +442,6 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
 
     // Extract zone labels - memoized to only change when labels actually change
     const zoneLabels = useMemo(() => {
-      console.log('🔄 [SessionCanvas] Recalculating zoneLabels', {
-        hasBoard: !!board,
-        objectsCount: Object.keys(board?.objects || {}).length,
-      });
       if (!board?.objects) return {};
       const labels: Record<string, string> = {};
       Object.entries(board.objects).forEach(([id, obj]) => {
@@ -453,7 +449,6 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
           labels[id] = obj.label;
         }
       });
-      console.log('✅ [SessionCanvas] zoneLabels calculated:', labels);
       return labels;
     }, [board]);
 
@@ -466,7 +461,6 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
         const boardObject = boardObjectByWorktree.get(worktreeId);
 
         if (!boardObject || !boardObject.zone_id) {
-          console.warn('Worktree not pinned or board object not found');
           return;
         }
 
@@ -1343,12 +1337,13 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
                             worktree_id: nodeId as WorktreeID,
                             description: `Session from zone "${zoneData.label}"`,
                             status: 'idle',
-                            agentic_tool: 'claude-code',
+                            agentic_tool: (trigger.agent || 'claude-code') as AgenticToolName,
                           });
 
                           // Send prompt to new session
                           await client.service(`sessions/${newSession.session_id}/prompt`).create({
                             prompt: renderedPrompt,
+                            messageSource: 'agor',
                           });
                         } catch (error) {
                           console.error('❌ Failed to execute always_new trigger:', error);
@@ -1438,9 +1433,6 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
                     },
                   };
                 } else {
-                  console.warn(
-                    `⚠️ Zone ${parentId} not found for comment ${comment_id}, using absolute position`
-                  );
                   commentData.position = { absolute: position };
                   // biome-ignore lint/suspicious/noExplicitAny: need null to clear DB field, not undefined
                   commentData.worktree_id = null as any;
@@ -1464,9 +1456,6 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
                     },
                   };
                 } else {
-                  console.warn(
-                    `⚠️ Worktree ${parentId} not found for comment ${comment_id}, using absolute position`
-                  );
                   commentData.position = { absolute: position };
                   // biome-ignore lint/suspicious/noExplicitAny: need null to clear DB field, not undefined
                   commentData.worktree_id = null as any;
@@ -1730,7 +1719,6 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
               offset_y: position.y - worktreeNode.position.y,
             },
           };
-          console.log(`✓ Comment pinned to worktree ${worktreeId}`);
         } else if (zoneNode) {
           // Comment pinned to zone - use relative positioning
           const zoneId = zoneNode.id.replace('zone-', ''); // Extract zone object ID
@@ -1742,13 +1730,11 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
               offset_y: position.y - zoneNode.position.y,
             },
           };
-          console.log(`✓ Comment pinned to zone ${zoneId}`);
         } else {
           // Free-floating comment - use absolute positioning
           commentData.position = {
             absolute: position,
           };
-          console.log('✓ Comment placed at absolute position');
         }
 
         await client.service('board-comments').create(commentData);
@@ -1835,10 +1821,6 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
           },
           // biome-ignore lint/suspicious/noExplicitAny: Board patch with custom _action field
         } as any);
-
-        console.log(
-          `✓ ${markdownModal.objectId ? 'Updated' : 'Created'} markdown note ${objectId}`
-        );
       } catch (error) {
         console.error('Failed to save markdown note:', error);
         // Rollback optimistic update
@@ -2253,8 +2235,6 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
                     return;
                   }
 
-                  console.log('✅ Execute trigger:', triggerModal.trigger);
-
                   try {
                     const { sessionId, trigger } = triggerModal;
 
@@ -2307,7 +2287,6 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
                     try {
                       const template = Handlebars.compile(trigger.template);
                       renderedPrompt = template(context);
-                      console.log('📝 Rendered template:', renderedPrompt);
                     } catch (templateError) {
                       console.error('❌ Handlebars template error:', templateError);
                       // Fallback to raw template if template fails
@@ -2317,11 +2296,8 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
                     // Send rendered prompt to session
                     await client.service(`sessions/${sessionId}/prompt`).create({
                       prompt: renderedPrompt,
+                      messageSource: 'agor',
                     });
-
-                    console.log(
-                      `✨ Zone trigger executed for session ${sessionId.substring(0, 8)}: ${renderedPrompt.substring(0, 50)}...`
-                    );
                   } catch (error) {
                     console.error('❌ Failed to execute trigger:', error);
                   } finally {
@@ -2329,7 +2305,6 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
                   }
                 }}
                 onCancel={() => {
-                  console.log('⏭️  Trigger skipped by user');
                   setTriggerModal(null);
                 }}
                 okText="Yes, Execute"
@@ -2472,10 +2447,6 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
               }
 
               try {
-                console.log(
-                  `✨ Executing ${action} for worktree ${worktreeTriggerModal.worktreeId.substring(0, 8)}`
-                );
-
                 let targetSessionId = sessionId;
 
                 // If creating new session, create it first
@@ -2498,14 +2469,12 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
                       : undefined,
                   });
                   targetSessionId = newSession.session_id;
-                  console.log(`✓ Created new session: ${targetSessionId.substring(0, 8)}`);
 
                   // Attach MCP servers if provided
                   if (mcpServerIds && mcpServerIds.length > 0) {
                     await client
                       .service(`sessions/${targetSessionId}/mcp-servers`)
                       .patch(null, { mcpServerIds });
-                    console.log(`✓ Attached ${mcpServerIds.length} MCP servers to session`);
                   }
                 }
 
@@ -2515,8 +2484,8 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
                     await client.service(`sessions/${targetSessionId}/prompt`).create({
                       prompt: renderedTemplate,
                       permissionMode,
+                      messageSource: 'agor',
                     });
-                    console.log(`✓ Sent prompt to session ${targetSessionId.substring(0, 8)}`);
                     break;
                   }
                   case 'fork': {
@@ -2526,10 +2495,8 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
                     await client.service(`sessions/${forkedSession.session_id}/prompt`).create({
                       prompt: renderedTemplate,
                       permissionMode,
+                      messageSource: 'agor',
                     });
-                    console.log(
-                      `✓ Forked session and sent prompt to ${forkedSession.session_id.substring(0, 8)}`
-                    );
                     break;
                   }
                   case 'spawn': {
@@ -2539,15 +2506,11 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
                     await client.service(`sessions/${spawnedSession.session_id}/prompt`).create({
                       prompt: renderedTemplate,
                       permissionMode,
+                      messageSource: 'agor',
                     });
-                    console.log(
-                      `✓ Spawned child session and sent prompt to ${spawnedSession.session_id.substring(0, 8)}`
-                    );
                     break;
                   }
                 }
-
-                console.log('✅ Zone trigger executed successfully');
               } catch (error) {
                 console.error('❌ Failed to execute zone trigger:', error);
               } finally {

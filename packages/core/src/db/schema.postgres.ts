@@ -13,8 +13,9 @@ import type {
   Session,
   Task,
 } from '@agor/core/types';
-import { sql } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -23,6 +24,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
   varchar,
 } from 'drizzle-orm/pg-core';
 
@@ -78,7 +80,7 @@ export const sessions = pgTable(
       }),
 
     // Scheduler tracking (materialized for deduplication and retention cleanup)
-    scheduled_run_at: integer('scheduled_run_at'), // Unix timestamp (ms) - authoritative run ID
+    scheduled_run_at: bigint('scheduled_run_at', { mode: 'number' }), // Unix timestamp (ms) - authoritative run ID - bigint to support dates beyond 2038
     scheduled_from_worktree: t.bool('scheduled_from_worktree').notNull().default(false),
 
     // UI state (materialized for efficient highlighting queries)
@@ -415,8 +417,8 @@ export const worktrees = pgTable(
     // Scheduler config (materialized for efficient queries)
     schedule_enabled: t.bool('schedule_enabled').notNull().default(false),
     schedule_cron: text('schedule_cron'), // Cron expression (e.g., "0 9 * * 1-5")
-    schedule_last_triggered_at: integer('schedule_last_triggered_at'), // Unix timestamp (ms)
-    schedule_next_run_at: integer('schedule_next_run_at'), // Unix timestamp (ms)
+    schedule_last_triggered_at: bigint('schedule_last_triggered_at', { mode: 'number' }), // Unix timestamp (ms) - bigint to support dates beyond 2038
+    schedule_next_run_at: bigint('schedule_next_run_at', { mode: 'number' }), // Unix timestamp (ms) - bigint to support dates beyond 2038
 
     // UI state (materialized for efficient highlighting queries)
     needs_attention: t.bool('needs_attention').notNull().default(true), // Default true for new worktrees
@@ -913,6 +915,95 @@ export const boardComments = pgTable(
 );
 
 /**
+ * Gateway Channels table - Registered messaging platform integrations
+ *
+ * Users create channels to connect messaging platforms (Slack, Discord, etc.)
+ * to Agor. Each channel targets a specific worktree and routes messages
+ * to/from sessions within that worktree.
+ */
+export const gatewayChannels = pgTable(
+  'gateway_channels',
+  {
+    // Primary identity
+    id: varchar('id', { length: 36 }).primaryKey(),
+    created_at: t.timestamp('created_at').notNull(),
+    updated_at: t.timestamp('updated_at').notNull(),
+
+    // User attribution
+    created_by: varchar('created_by', { length: 36 }).notNull().default('anonymous'),
+
+    // Materialized for queries
+    name: text('name').notNull(),
+    channel_type: text('channel_type', {
+      enum: ['slack', 'discord', 'whatsapp', 'telegram'],
+    }).notNull(),
+    target_worktree_id: varchar('target_worktree_id', { length: 36 })
+      .notNull()
+      .references(() => worktrees.worktree_id, { onDelete: 'cascade' }),
+    agor_user_id: varchar('agor_user_id', { length: 36 }).notNull(),
+    channel_key: text('channel_key').notNull().unique(),
+    enabled: t.bool('enabled').notNull().default(true),
+    last_message_at: t.timestamp('last_message_at'),
+
+    // JSON blob for platform credentials (encrypted at rest)
+    config: t.json<Record<string, unknown>>('config').notNull(),
+
+    // JSON blob for agentic tool configuration (agent, model, permission mode, etc.)
+    agentic_config: t.json<Record<string, unknown> | null>('agentic_config'),
+  },
+  (table) => ({
+    channelKeyIdx: index('idx_gateway_channel_key').on(table.channel_key),
+    enabledTypeIdx: index('idx_gateway_enabled_type').on(table.enabled, table.channel_type),
+  })
+);
+
+/**
+ * Thread-Session Map table - Links platform threads to Agor sessions
+ *
+ * Each thread in a messaging platform maps 1:1 to an Agor session.
+ * The gateway service manages these mappings for routing.
+ */
+export const threadSessionMap = pgTable(
+  'thread_session_map',
+  {
+    // Primary identity
+    id: varchar('id', { length: 36 }).primaryKey(),
+    created_at: t.timestamp('created_at').notNull(),
+    last_message_at: t.timestamp('last_message_at').notNull(),
+
+    // Foreign keys
+    channel_id: varchar('channel_id', { length: 36 })
+      .notNull()
+      .references(() => gatewayChannels.id, { onDelete: 'cascade' }),
+    thread_id: text('thread_id').notNull(),
+    session_id: varchar('session_id', { length: 36 })
+      .notNull()
+      .references(() => sessions.session_id, { onDelete: 'cascade' }),
+    worktree_id: varchar('worktree_id', { length: 36 })
+      .notNull()
+      .references(() => worktrees.worktree_id),
+
+    // Materialized for queries
+    status: text('status', {
+      enum: ['active', 'archived', 'paused'],
+    })
+      .notNull()
+      .default('active'),
+
+    // JSON blob for extra metadata
+    metadata: t.json<Record<string, unknown>>('metadata'),
+  },
+  (table) => ({
+    uniqueChannelThread: uniqueIndex('uniq_thread_map_channel_thread').on(
+      table.channel_id,
+      table.thread_id
+    ),
+    sessionIdx: index('idx_thread_map_session_id').on(table.session_id),
+    channelStatusIdx: index('idx_thread_map_channel_status').on(table.channel_id, table.status),
+  })
+);
+
+/**
  * Type exports for use with Drizzle ORM
  */
 export type SessionRow = typeof sessions.$inferSelect;
@@ -937,3 +1028,24 @@ export type BoardObjectRow = typeof boardObjects.$inferSelect;
 export type BoardObjectInsert = typeof boardObjects.$inferInsert;
 export type BoardCommentRow = typeof boardComments.$inferSelect;
 export type BoardCommentInsert = typeof boardComments.$inferInsert;
+export type GatewayChannelRow = typeof gatewayChannels.$inferSelect;
+export type GatewayChannelInsert = typeof gatewayChannels.$inferInsert;
+export type ThreadSessionMapRow = typeof threadSessionMap.$inferSelect;
+export type ThreadSessionMapInsert = typeof threadSessionMap.$inferInsert;
+
+/**
+ * Drizzle Relations for Relational Queries
+ *
+ * These enable automatic JOINs using db.query.sessions.findFirst({ with: { worktree: true } })
+ */
+
+export const sessionsRelations = relations(sessions, ({ one }) => ({
+  worktree: one(worktrees, {
+    fields: [sessions.worktree_id],
+    references: [worktrees.worktree_id],
+  }),
+}));
+
+export const worktreesRelations = relations(worktrees, ({ many }) => ({
+  sessions: many(sessions),
+}));

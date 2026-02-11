@@ -9,6 +9,7 @@ import { type ApiKeyName, resolveApiKey } from '@agor/core/config';
 import { getGitState } from '@agor/core/git';
 import type {
   MessageID,
+  MessageSource,
   PermissionMode,
   SessionID,
   StreamingEventType,
@@ -30,7 +31,8 @@ export interface BaseTool {
     taskId?: TaskID,
     permissionMode?: PermissionMode,
     callbacks?: StreamingCallbacks,
-    abortController?: AbortController
+    abortController?: AbortController,
+    messageSource?: MessageSource
   ): Promise<{
     userMessageId: MessageID;
     assistantMessageIds: MessageID[];
@@ -275,6 +277,7 @@ export async function executeToolTask(params: {
   abortController: AbortController;
   apiKeyEnvVar: string;
   toolName: string;
+  messageSource?: 'gateway' | 'agor';
   createTool: (
     repos: ReturnType<typeof createFeathersBackedRepositories>,
     apiKey: string,
@@ -288,6 +291,15 @@ export async function executeToolTask(params: {
 
   // Resolve API key with proper precedence (user → config → env → native auth)
   const resolution = await resolveApiKeyForTask(apiKeyEnvVar as ApiKeyName, client, taskId);
+
+  // Fail fast if stored key can't be decrypted (e.g. master secret changed)
+  if (resolution.decryptionFailed) {
+    throw new Error(
+      `API key "${apiKeyEnvVar}" could not be decrypted. ` +
+        `The stored key may have been encrypted with a different master secret. ` +
+        `Please re-enter your API key in Settings > API Keys.`
+    );
+  }
 
   // Log resolution result
   if (resolution.apiKey) {
@@ -343,7 +355,8 @@ export async function executeToolTask(params: {
       taskId,
       permissionMode,
       ctx.callbacks,
-      params.abortController
+      params.abortController,
+      params.messageSource
     );
 
     console.log(

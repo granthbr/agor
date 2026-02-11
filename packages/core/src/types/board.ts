@@ -1,3 +1,4 @@
+import type { AgenticToolName } from './agentic-tool';
 import type { BoardID, WorktreeID } from './id';
 
 /**
@@ -63,6 +64,8 @@ export interface ZoneTrigger {
   template: string;
   /** Trigger behavior mode (default: 'show_picker') */
   behavior: ZoneTriggerBehavior;
+  /** Preferred agent for auto-created sessions (default: 'claude-code') */
+  agent?: AgenticToolName;
 }
 
 /**
@@ -173,6 +176,14 @@ export interface Board {
    * Access in templates: {{ board.context.team }}
    */
   custom_context?: Record<string, unknown>;
+
+  /**
+   * External/user-facing URL for viewing this board in the UI
+   *
+   * Computed property added by API hooks.
+   * Format: {baseUrl}/b/{boardId}/
+   */
+  url: string;
 }
 
 /**

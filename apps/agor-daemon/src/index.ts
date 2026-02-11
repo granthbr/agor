@@ -83,6 +83,7 @@ import type {
   HookContext,
   Id,
   Message,
+  MessageSource,
   Paginated,
   Params,
   PermissionRequestContent,
@@ -311,6 +312,7 @@ import type {
   SessionsServiceImpl,
   TasksServiceImpl,
 } from './declarations';
+import { gatewayRouteHook } from './hooks/gateway-route';
 import { createBoardCommentsService } from './services/board-comments';
 import { createBoardObjectsService } from './services/board-objects';
 import { createBoardsService } from './services/boards';
@@ -318,6 +320,8 @@ import { createConfigService } from './services/config';
 import { createContextService } from './services/context';
 import { createFileService } from './services/file';
 import { createFilesService } from './services/files';
+import { createGatewayService, type GatewayService } from './services/gateway';
+import { createGatewayChannelsService } from './services/gateway-channels';
 import { createHealthMonitor } from './services/health-monitor';
 import { createLeaderboardService } from './services/leaderboard';
 import { createMCPServersService } from './services/mcp-servers';
@@ -328,6 +332,7 @@ import { createSessionMCPServersService } from './services/session-mcp-servers';
 import { createSessionsService } from './services/sessions';
 import { createTasksService } from './services/tasks';
 import { TerminalsService } from './services/terminals';
+import { createThreadSessionMapService } from './services/thread-session-map';
 import { createUsersService } from './services/users';
 import { setupWorktreeOwnersService } from './services/worktree-owners.js';
 import { createWorktreesService } from './services/worktrees';
@@ -649,263 +654,270 @@ async function main() {
   });
 
   // Wire up custom session methods for Feathers/WebSocket executor architecture
-  sessionsService.setExecuteHandler(async (sessionId, data, params) => {
-    // Import spawn, execSync and path utilities
-    const { spawn, execSync } = await import('node:child_process');
-    const path = await import('node:path');
-    const { fileURLToPath } = await import('node:url');
-
-    // Get session and validate
-    const session = await sessionsService.get(sessionId, params);
-    if (!session) {
-      throw new Error(`Session ${sessionId} not found`);
-    }
-
-    // Generate session token for executor authentication
-    const appWithExecutor = app as unknown as {
-      sessionTokenService?: import('./services/session-token-service').SessionTokenService;
-    };
-    if (!appWithExecutor.sessionTokenService) {
-      throw new Error('Session token service not initialized');
-    }
-    const sessionToken = await appWithExecutor.sessionTokenService.generateToken(
-      sessionId,
-      (params as AuthenticatedParams).user?.user_id || 'anonymous'
-    );
-
-    // Use the task ID provided by caller (task already created by prompt endpoint)
-    const taskId = data.taskId;
-
-    // NOTE: API key resolution is now handled by the executor with proper precedence:
-    // 1. Per-user encrypted keys (from database)
-    // 2. Global config.yaml keys
-    // 3. Environment variables
-    // The executor will let SDKs handle OAuth if no key is found.
-
-    // Get worktree path
-    let cwd = process.cwd();
-    if (session.worktree_id) {
-      try {
-        const worktree = await app.service('worktrees').get(session.worktree_id, params);
-        cwd = worktree.path;
-      } catch (error) {
-        console.warn(`Could not get worktree path for ${session.worktree_id}:`, error);
-      }
-    }
-
-    // Spawn executor process with Feathers/WebSocket mode
-    const dirname =
-      typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
-
-    // Try multiple possible paths for executor (development vs bundled)
-    const { existsSync } = await import('node:fs');
-    const possiblePaths = [
-      path.join(dirname, '../executor/cli.js'), // Bundled in agor-live
-      path.join(dirname, '../../../packages/executor/bin/agor-executor'), // Development - bin script with fallback to tsx
-      path.join(dirname, '../../../packages/executor/dist/cli.js'), // Development from apps/agor-daemon/dist (if built)
-    ];
-
-    const executorPath = possiblePaths.find((p) => existsSync(p));
-    if (!executorPath) {
-      throw new Error(
-        `Executor binary not found. Tried:\n${possiblePaths.map((p) => `  - ${p}`).join('\n')}`
-      );
-    }
-
-    console.log(`[Daemon] Using executor at: ${executorPath}`);
-
-    // =========================================================================
-    // DETERMINE UNIX USER FOR EXECUTOR BASED ON unix_user_mode
-    // Uses centralized logic from @agor/core/unix
-    // =========================================================================
-    const {
-      resolveUnixUserForImpersonation,
-      validateResolvedUnixUser,
-      UnixUserNotFoundError,
-      buildSpawnArgs,
-    } = await import('@agor/core/unix');
-
-    const unixUserMode = (config.execution?.unix_user_mode ?? 'simple') as UnixUserMode;
-    const configExecutorUser = config.execution?.executor_unix_user;
-    const sessionUnixUser = session.unix_username;
-
-    console.log('[Daemon] Determining executor Unix user:', {
-      sessionId: session.session_id.slice(0, 8),
-      unixUserMode,
-      sessionUnixUser,
-      configExecutorUser,
-    });
-
-    // Use centralized impersonation resolution logic
-    const impersonationResult = resolveUnixUserForImpersonation({
-      mode: unixUserMode,
-      userUnixUsername: sessionUnixUser,
-      executorUnixUser: configExecutorUser,
-    });
-
-    const executorUnixUser = impersonationResult.unixUser;
-    const impersonationReason = impersonationResult.reason;
-
-    console.log(`[Daemon] Executor impersonation: ${impersonationReason}`);
-
-    // Determine permission mode: explicit override > session config > 'default'
-    // This ensures session settings (like bypassPermissions) are preserved unless explicitly overridden
-    // Note: 'default' is not part of the executor's Zod schema, so we convert it to undefined
-    const effectivePermissionMode =
-      data.permissionMode || session.permission_config?.mode || undefined;
-    const permissionModeForPayload =
-      effectivePermissionMode === 'default' ? undefined : effectivePermissionMode;
-
-    // Validate Unix user exists for modes that require it
-    try {
-      validateResolvedUnixUser(unixUserMode, executorUnixUser);
-    } catch (err) {
-      if (err instanceof UnixUserNotFoundError) {
-        throw new Error(
-          `${(err as InstanceType<typeof UnixUserNotFoundError>).message}. Ensure the Unix user is created before attempting to execute sessions.`
-        );
-      }
-      throw err;
-    }
-
-    // Resolve user environment variables (includes user's encrypted env vars like GITHUB_TOKEN)
-    // Use the authenticated user (whoever is executing the command), not session creator
-    const userId = (params as AuthenticatedParams).user?.user_id as
-      | import('@agor/core/types').UserID
-      | undefined;
-    const executorEnv = await createUserProcessEnvironment(userId, db);
-
-    // Add DAEMON_URL to environment so executor can connect back
-    executorEnv.DAEMON_URL = daemonUrl;
-
-    // When impersonating, override HOME to use impersonated user's home directory
-    if (executorUnixUser) {
-      // Get impersonated user's home directory from /etc/passwd
-      const userHomeDir = execSync(`getent passwd "${executorUnixUser}" | cut -d: -f6`, {
-        encoding: 'utf8',
-      }).trim();
-
-      // Override HOME with impersonated user's home directory
-      // Keep everything else from createUserProcessEnvironment (user env vars, API keys, etc.)
-      executorEnv.HOME = userHomeDir || executorEnv.HOME;
-    }
-
-    // =========================================================================
-    // PHASE 4: JSON-OVER-STDIN WITH IMPERSONATION AT SPAWN
-    //
-    // Impersonation happens at spawn time using buildSpawnArgs():
-    // - When asUser is set, spawns via `sudo -u $asUser bash -c 'node executor --stdin'`
-    // - Executor runs directly as target user with fresh group memberships
-    // - No "node calling node" indirection
-    //
-    // Benefits:
-    // - Single spawn, not node-within-node
-    // - Fresh group memberships (sudo -u calls initgroups())
-    // - k8s compatible (can use pod security context instead)
-    // - Security: Uses sudo -u (not sudo su) to avoid whitelisting /usr/bin/su
-    // =========================================================================
-
-    // Build JSON payload for executor (Phase 2 --stdin mode)
-    // Note: asUser is NOT in payload - impersonation happens at spawn time
-    const executorPayload = {
-      command: 'prompt' as const,
-      sessionToken,
-      daemonUrl,
-      env: executorEnv,
-      params: {
-        sessionId,
-        taskId,
-        prompt: data.prompt,
-        tool: session.agentic_tool as 'claude-code' | 'gemini' | 'codex' | 'opencode',
-        permissionMode: permissionModeForPayload as 'ask' | 'auto' | 'allow-all' | undefined,
-        cwd,
+  sessionsService.setExecuteHandler(
+    async (
+      sessionId: string,
+      data: {
+        taskId: string;
+        prompt: string;
+        permissionMode?: import('@agor/core/types').PermissionMode;
+        stream?: boolean;
+        messageSource?: MessageSource;
       },
-    };
+      params
+    ) => {
+      // Import spawn and path utilities
+      const { spawn } = await import('node:child_process');
+      const path = await import('node:path');
+      const { fileURLToPath } = await import('node:url');
 
-    // Build spawn command - handles impersonation via sudo -u when executorUnixUser is set
-    const { cmd, args } = buildSpawnArgs('node', [executorPath, '--stdin'], {
-      asUser: executorUnixUser || undefined,
-      env: executorUnixUser ? executorEnv : undefined, // Only inject env when impersonating
-    });
+      // Get session and validate
+      const session = await sessionsService.get(sessionId, params);
+      if (!session) {
+        throw new Error(`Session ${sessionId} not found`);
+      }
 
-    if (executorUnixUser) {
-      console.log(`[Daemon] Spawning executor as user: ${executorUnixUser}`);
-    } else {
-      console.log(`[Daemon] Spawning executor as current user (no impersonation)`);
-    }
+      // Generate session token for executor authentication
+      const appWithExecutor = app as unknown as {
+        sessionTokenService?: import('./services/session-token-service').SessionTokenService;
+      };
+      if (!appWithExecutor.sessionTokenService) {
+        throw new Error('Session token service not initialized');
+      }
+      const sessionToken = await appWithExecutor.sessionTokenService.generateToken(
+        sessionId,
+        (params as AuthenticatedParams).user?.user_id || 'anonymous'
+      );
 
-    // Spawn executor with --stdin mode, pipe JSON payload via stdin
-    const executorProcess = spawn(cmd, args, {
-      cwd,
-      env: executorUnixUser ? undefined : executorEnv, // When impersonating, env is in the command
-      stdio: ['pipe', 'pipe', 'pipe'], // Enable stdin for JSON payload
-    });
+      // Use the task ID provided by caller (task already created by prompt endpoint)
+      const taskId = data.taskId;
 
-    // Write JSON payload to stdin
-    executorProcess.stdin?.write(JSON.stringify(executorPayload));
-    executorProcess.stdin?.end();
+      // NOTE: API key resolution is now handled by the executor with proper precedence:
+      // 1. Per-user encrypted keys (from database)
+      // 2. Global config.yaml keys
+      // 3. Environment variables
+      // The executor will let SDKs handle OAuth if no key is found.
 
-    // Log executor output
-    executorProcess.stdout?.on('data', (data) => {
-      console.log(`[Executor ${sessionId.slice(0, 8)}] ${data.toString().trim()}`);
-    });
-
-    executorProcess.stderr?.on('data', (data) => {
-      console.error(`[Executor ${sessionId.slice(0, 8)}] ${data.toString().trim()}`);
-    });
-
-    executorProcess.on('exit', async (code) => {
-      console.log(`[Executor ${sessionId.slice(0, 8)}] Exited with code ${code}`);
-
-      // Safety net: Update session status back to IDLE when executor completes
-      // The primary session status update happens in TasksService.patch() when task status changes
-      // This is a fallback in case the task status update didn't trigger session status change
-      if (code === 0) {
+      // Get worktree path
+      let cwd = process.cwd();
+      if (session.worktree_id) {
         try {
-          // CRITICAL: Check if THIS task is still the current/latest task before updating
-          // If a new task has started while this executor was exiting, we must NOT
-          // set the session to IDLE - that would break the running task.
-          const currentSession = await app.service('sessions').get(sessionId, params);
-          const latestTaskId = currentSession.tasks?.[currentSession.tasks.length - 1];
-
-          if (latestTaskId && latestTaskId !== taskId) {
-            console.log(
-              `⏭️ [Executor] Task ${taskId.slice(0, 8)} is not the latest (latest: ${latestTaskId.slice(0, 8)}), skipping IDLE update`
-            );
-            // Skip the update - a newer task owns the session state
-          } else if (currentSession.status === SessionStatus.RUNNING) {
-            await app.service('sessions').patch(
-              sessionId,
-              {
-                status: SessionStatus.IDLE,
-                ready_for_prompt: true,
-              },
-              params
-            );
-            console.log(
-              `✅ [Executor] Session ${sessionId.slice(0, 8)} status updated to IDLE after executor exit (fallback)`
-            );
-          } else {
-            console.log(
-              `ℹ️  [Executor] Session ${sessionId.slice(0, 8)} already in ${currentSession.status} state, skipping IDLE update`
-            );
-          }
+          const worktree = await app.service('worktrees').get(session.worktree_id, params);
+          cwd = worktree.path;
         } catch (error) {
-          console.error(`❌ [Executor] Failed to update session status to IDLE:`, error);
+          console.warn(`Could not get worktree path for ${session.worktree_id}:`, error);
         }
       }
 
-      // Revoke session token after executor exits
-      appWithExecutor.sessionTokenService?.revokeToken(sessionToken);
-    });
+      // Spawn executor process with Feathers/WebSocket mode
+      const dirname =
+        typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
 
-    return {
-      success: true,
-      taskId: taskId,
-      status: 'running',
-      streaming: data.stream !== false,
-    };
-  });
+      // Try multiple possible paths for executor (development vs bundled)
+      const { existsSync } = await import('node:fs');
+      const possiblePaths = [
+        path.join(dirname, '../executor/cli.js'), // Bundled in agor-live
+        path.join(dirname, '../../../packages/executor/bin/agor-executor'), // Development - bin script with fallback to tsx
+        path.join(dirname, '../../../packages/executor/dist/cli.js'), // Development from apps/agor-daemon/dist (if built)
+      ];
+
+      const executorPath = possiblePaths.find((p) => existsSync(p));
+      if (!executorPath) {
+        throw new Error(
+          `Executor binary not found. Tried:\n${possiblePaths.map((p) => `  - ${p}`).join('\n')}`
+        );
+      }
+
+      console.log(`[Daemon] Using executor at: ${executorPath}`);
+
+      // =========================================================================
+      // DETERMINE UNIX USER FOR EXECUTOR BASED ON unix_user_mode
+      // Uses centralized logic from @agor/core/unix
+      // =========================================================================
+      const {
+        resolveUnixUserForImpersonation,
+        validateResolvedUnixUser,
+        UnixUserNotFoundError,
+        buildSpawnArgs,
+      } = await import('@agor/core/unix');
+
+      const unixUserMode = (config.execution?.unix_user_mode ?? 'simple') as UnixUserMode;
+      const configExecutorUser = config.execution?.executor_unix_user;
+      const sessionUnixUser = session.unix_username;
+
+      console.log('[Daemon] Determining executor Unix user:', {
+        sessionId: session.session_id.slice(0, 8),
+        unixUserMode,
+        sessionUnixUser,
+        configExecutorUser,
+      });
+
+      // Use centralized impersonation resolution logic
+      const impersonationResult = resolveUnixUserForImpersonation({
+        mode: unixUserMode,
+        userUnixUsername: sessionUnixUser,
+        executorUnixUser: configExecutorUser,
+      });
+
+      const executorUnixUser = impersonationResult.unixUser;
+      const impersonationReason = impersonationResult.reason;
+
+      console.log(`[Daemon] Executor impersonation: ${impersonationReason}`);
+
+      // Determine permission mode: explicit override > session config > 'default'
+      // This ensures session settings (like bypassPermissions) are preserved unless explicitly overridden
+      // Note: 'default' is not part of the executor's Zod schema, so we convert it to undefined
+      const effectivePermissionMode =
+        data.permissionMode || session.permission_config?.mode || undefined;
+      const permissionModeForPayload =
+        effectivePermissionMode === 'default' ? undefined : effectivePermissionMode;
+
+      // Validate Unix user exists for modes that require it
+      try {
+        validateResolvedUnixUser(unixUserMode, executorUnixUser);
+      } catch (err) {
+        if (err instanceof UnixUserNotFoundError) {
+          throw new Error(
+            `${(err as InstanceType<typeof UnixUserNotFoundError>).message}. Ensure the Unix user is created before attempting to execute sessions.`
+          );
+        }
+        throw err;
+      }
+
+      // Resolve user environment variables (includes user's encrypted env vars like GITHUB_TOKEN)
+      // Use the authenticated user (whoever is executing the command), not session creator
+      const userId = (params as AuthenticatedParams).user?.user_id as
+        | import('@agor/core/types').UserID
+        | undefined;
+      // When impersonating, strip HOME/USER/LOGNAME/SHELL so sudo -u can set them
+      const executorEnv = await createUserProcessEnvironment(
+        userId,
+        db,
+        undefined,
+        !!executorUnixUser
+      );
+
+      // Add DAEMON_URL to environment so executor can connect back
+      executorEnv.DAEMON_URL = daemonUrl;
+
+      // =========================================================================
+      // PHASE 4: JSON-OVER-STDIN WITH IMPERSONATION AT SPAWN
+      //
+      // Impersonation happens at spawn time using buildSpawnArgs():
+      // - When asUser is set, spawns via `sudo -u $asUser bash -c 'node executor --stdin'`
+      // - Executor runs directly as target user with fresh group memberships
+      // - No "node calling node" indirection
+      //
+      // Benefits:
+      // - Single spawn, not node-within-node
+      // - Fresh group memberships (sudo -u calls initgroups())
+      // - k8s compatible (can use pod security context instead)
+      // - Security: Uses sudo -u (not sudo su) to avoid whitelisting /usr/bin/su
+      // =========================================================================
+
+      // Build JSON payload for executor (Phase 2 --stdin mode)
+      // Note: asUser is NOT in payload - impersonation happens at spawn time
+      const executorPayload = {
+        command: 'prompt' as const,
+        sessionToken,
+        daemonUrl,
+        env: executorEnv,
+        params: {
+          sessionId,
+          taskId,
+          prompt: data.prompt,
+          tool: session.agentic_tool as 'claude-code' | 'gemini' | 'codex' | 'opencode',
+          permissionMode: permissionModeForPayload as 'ask' | 'auto' | 'allow-all' | undefined,
+          cwd,
+          messageSource: data.messageSource,
+        },
+      };
+
+      // Build spawn command - handles impersonation via sudo -u when executorUnixUser is set
+      const { cmd, args } = buildSpawnArgs('node', [executorPath, '--stdin'], {
+        asUser: executorUnixUser || undefined,
+        env: executorUnixUser ? executorEnv : undefined, // Only inject env when impersonating
+      });
+
+      if (executorUnixUser) {
+        console.log(`[Daemon] Spawning executor as user: ${executorUnixUser}`);
+      } else {
+        console.log(`[Daemon] Spawning executor as current user (no impersonation)`);
+      }
+
+      // Spawn executor with --stdin mode, pipe JSON payload via stdin
+      const executorProcess = spawn(cmd, args, {
+        cwd,
+        env: executorUnixUser ? undefined : executorEnv, // When impersonating, env is in the command
+        stdio: ['pipe', 'pipe', 'pipe'], // Enable stdin for JSON payload
+      });
+
+      // Write JSON payload to stdin
+      executorProcess.stdin?.write(JSON.stringify(executorPayload));
+      executorProcess.stdin?.end();
+
+      // Log executor output
+      executorProcess.stdout?.on('data', (data) => {
+        console.log(`[Executor ${sessionId.slice(0, 8)}] ${data.toString().trim()}`);
+      });
+
+      executorProcess.stderr?.on('data', (data) => {
+        console.error(`[Executor ${sessionId.slice(0, 8)}] ${data.toString().trim()}`);
+      });
+
+      executorProcess.on('exit', async (code) => {
+        console.log(`[Executor ${sessionId.slice(0, 8)}] Exited with code ${code}`);
+
+        // Safety net: Update session status back to IDLE when executor completes
+        // The primary session status update happens in TasksService.patch() when task status changes
+        // This is a fallback in case the task status update didn't trigger session status change
+        if (code === 0) {
+          try {
+            // CRITICAL: Check if THIS task is still the current/latest task before updating
+            // If a new task has started while this executor was exiting, we must NOT
+            // set the session to IDLE - that would break the running task.
+            const currentSession = await app.service('sessions').get(sessionId, params);
+            const latestTaskId = currentSession.tasks?.[currentSession.tasks.length - 1];
+
+            if (latestTaskId && latestTaskId !== taskId) {
+              console.log(
+                `⏭️ [Executor] Task ${taskId.slice(0, 8)} is not the latest (latest: ${latestTaskId.slice(0, 8)}), skipping IDLE update`
+              );
+              // Skip the update - a newer task owns the session state
+            } else if (currentSession.status === SessionStatus.RUNNING) {
+              await app.service('sessions').patch(
+                sessionId,
+                {
+                  status: SessionStatus.IDLE,
+                  ready_for_prompt: true,
+                },
+                params
+              );
+              console.log(
+                `✅ [Executor] Session ${sessionId.slice(0, 8)} status updated to IDLE after executor exit (fallback)`
+              );
+            } else {
+              console.log(
+                `ℹ️  [Executor] Session ${sessionId.slice(0, 8)} already in ${currentSession.status} state, skipping IDLE update`
+              );
+            }
+          } catch (error) {
+            console.error(`❌ [Executor] Failed to update session status to IDLE:`, error);
+          }
+        }
+
+        // Revoke session token after executor exits
+        appWithExecutor.sessionTokenService?.revokeToken(sessionToken);
+      });
+
+      return {
+        success: true,
+        taskId: taskId,
+        status: 'running',
+        streaming: data.stream !== false,
+      };
+    }
+  );
 
   sessionsService.setStopHandler(async (sessionId, data, _params) => {
     // Emit task_stop event for Feathers/WebSocket executors
@@ -1446,44 +1458,10 @@ async function main() {
 
         const mcpServerRepo = new MCPServerRepository(db);
 
-        // SSRF Protection: Validate URLs to prevent internal network access
+        // Validate URL format and protocol
         const validateUrl = (url: string): { valid: boolean; error?: string } => {
           try {
             const parsed = new URL(url);
-            const hostname = parsed.hostname.toLowerCase();
-
-            // Block localhost and loopback
-            if (
-              hostname === 'localhost' ||
-              hostname === '127.0.0.1' ||
-              hostname === '::1' ||
-              hostname === '0.0.0.0'
-            ) {
-              return { valid: false, error: 'Connection to localhost is not allowed' };
-            }
-
-            // Block private IP ranges (10.x.x.x, 172.16-31.x.x, 192.168.x.x)
-            const ipv4Match = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-            if (ipv4Match) {
-              const [, a, b] = ipv4Match.map(Number);
-              if (
-                a === 10 ||
-                (a === 172 && b >= 16 && b <= 31) ||
-                (a === 192 && b === 168) ||
-                a === 169 // link-local
-              ) {
-                return { valid: false, error: 'Connection to private IP addresses is not allowed' };
-              }
-            }
-
-            // Block common internal hostnames
-            if (
-              hostname.endsWith('.local') ||
-              hostname.endsWith('.internal') ||
-              hostname.endsWith('.lan')
-            ) {
-              return { valid: false, error: 'Connection to internal hostnames is not allowed' };
-            }
 
             // Only allow http/https
             if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
@@ -1959,6 +1937,13 @@ async function main() {
     },
   });
 
+  // Register gateway services
+  app.use('/gateway-channels', createGatewayChannelsService(db));
+  app.use('/thread-session-map', createThreadSessionMapService(db));
+  app.use('/gateway', createGatewayService(db, app), {
+    methods: ['create', 'routeMessage'],
+  });
+
   // Register config service for API key management
   const configService = createConfigService(db);
   // Store app reference for service method access
@@ -2090,6 +2075,7 @@ async function main() {
       ],
     },
     after: {
+      create: [gatewayRouteHook],
       patch: [
         async (context: HookContext<Board>) => {
           // Detect permission resolution and notify executor via IPC
@@ -2435,6 +2421,88 @@ async function main() {
     },
   });
 
+  // Refresh the gateway's in-memory channel state when channels are mutated.
+  // This allows routeMessage() to skip DB lookups entirely when no channels exist.
+  // Also starts/stops Socket Mode listeners for created/updated/deleted channels.
+  const refreshGatewayChannelState = async (context: HookContext) => {
+    const gw = context.app.service('gateway') as unknown as GatewayService;
+
+    // Refresh the hasActiveChannels flag
+    gw.refreshChannelState().catch((err: unknown) =>
+      console.warn('[gateway] Failed to refresh channel state:', err)
+    );
+
+    // Start/stop listener for created/updated channel
+    const channel = context.result as { id: string } | undefined;
+    if (channel?.id) {
+      gw.startListenerForChannel(channel.id).catch((err: unknown) =>
+        console.warn(`[gateway] Failed to manage listener for channel ${channel.id}:`, err)
+      );
+    }
+
+    return context;
+  };
+
+  // Stop listener when channel is deleted
+  const stopGatewayChannelListener = async (context: HookContext) => {
+    const gw = context.app.service('gateway') as unknown as GatewayService;
+
+    // Stop listener for deleted channel (use id from route params)
+    const channelId = context.id as string | undefined;
+    if (channelId) {
+      gw.stopChannelListener(channelId).catch((err: unknown) =>
+        console.warn(`[gateway] Failed to stop listener for channel ${channelId}:`, err)
+      );
+    }
+
+    return context;
+  };
+
+  app.service('gateway-channels').hooks({
+    before: {
+      all: [requireAuth],
+      create: [requireMinimumRole('member', 'create gateway channels')],
+      patch: [requireMinimumRole('member', 'update gateway channels')],
+      remove: [requireMinimumRole('member', 'delete gateway channels')],
+    },
+    after: {
+      all: [
+        // Redact sensitive config fields in API responses
+        async (context: HookContext) => {
+          const redact = (channel: Record<string, unknown>) => {
+            if (channel?.config && typeof channel.config === 'object') {
+              const config = { ...(channel.config as Record<string, unknown>) };
+              for (const field of ['bot_token', 'app_token', 'signing_secret']) {
+                if (config[field]) {
+                  config[field] = '••••••••';
+                }
+              }
+              channel.config = config;
+            }
+          };
+          if (Array.isArray(context.result?.data)) {
+            for (const item of context.result.data) redact(item);
+          } else if (context.result) {
+            redact(context.result as Record<string, unknown>);
+          }
+          return context;
+        },
+      ],
+      create: [refreshGatewayChannelState],
+      patch: [refreshGatewayChannelState],
+      remove: [stopGatewayChannelListener, refreshGatewayChannelState],
+    },
+  });
+
+  app.service('thread-session-map').hooks({
+    before: {
+      all: [requireAuth],
+    },
+  });
+
+  // Gateway service create (postMessage) authenticates via channel_key, not user auth
+  // No hooks needed — auth is handled internally by the service
+
   app.service('config').hooks({
     before: {
       all: [requireAuth],
@@ -2557,18 +2625,26 @@ async function main() {
       // After user create/patch: optionally ensure Unix user exists and sync password
       create: [
         async (context: HookContext) => {
-          // Skip Unix sync if RBAC is disabled
-          if (!worktreeRbacEnabled || !jwtSecret) {
+          // Need JWT secret for service tokens (required by executor)
+          if (!jwtSecret) {
             return context;
           }
 
           const user = context.result as User;
           if (!user.unix_username) {
-            return context; // No unix_username set, skip Unix user creation
+            return context; // No unix_username set, skip Unix operations
           }
 
           // Get plaintext password from request data (for password sync)
           const data = context.data as { password?: string };
+
+          // Respect sync_unix_passwords config (defaults to true)
+          // When false, skip all Unix sync operations (user creation, groups, password)
+          const shouldSync = config.execution?.sync_unix_passwords ?? true;
+
+          if (!shouldSync) {
+            return context;
+          }
 
           // Fire-and-forget sync to executor
           console.log(`[Unix Integration] Syncing Unix user for: ${user.unix_username}`);
@@ -2592,8 +2668,8 @@ async function main() {
       ],
       patch: [
         async (context: HookContext) => {
-          // Skip Unix sync if RBAC is disabled
-          if (!worktreeRbacEnabled || !jwtSecret) {
+          // Need JWT secret for service tokens (required by executor)
+          if (!jwtSecret) {
             return context;
           }
 
@@ -2602,6 +2678,19 @@ async function main() {
 
           // Only sync if unix_username or password changed
           if (!data?.unix_username && !data?.password) {
+            return context;
+          }
+
+          // Skip if user doesn't have unix_username (would fail in executor anyway)
+          if (!user.unix_username) {
+            return context;
+          }
+
+          // Respect sync_unix_passwords config (defaults to true)
+          // When false, skip all Unix sync operations (user creation, groups, password)
+          const shouldSync = config.execution?.sync_unix_passwords ?? true;
+
+          if (!shouldSync) {
             return context;
           }
 
@@ -3628,16 +3717,32 @@ async function main() {
           prompt: string;
           permissionMode?: import('@agor/core/types').PermissionMode;
           stream?: boolean;
+          messageSource?: MessageSource;
         },
         params: RouteParams
       ) {
         console.log(`📨 [Daemon] Prompt request for session ${params.route?.id?.substring(0, 8)}`);
         console.log(`   Permission mode: ${data.permissionMode || 'not specified'}`);
         console.log(`   Streaming: ${data.stream !== false}`);
+        console.log(`   Message source: ${data.messageSource || 'not specified'}`);
 
         const id = params.route?.id;
         if (!id) throw new Error('Session ID required');
         if (!data.prompt) throw new Error('Prompt required');
+
+        // Validate and normalize messageSource
+        let messageSource: 'gateway' | 'agor' | undefined = data.messageSource;
+        if (
+          messageSource !== undefined &&
+          messageSource !== 'gateway' &&
+          messageSource !== 'agor'
+        ) {
+          // Invalid value - default to 'agor' for UI requests (params.provider present) or undefined for internal
+          console.warn(
+            `[Daemon] Invalid messageSource value: ${messageSource}, defaulting based on provider`
+          );
+          messageSource = params.provider ? 'agor' : undefined;
+        }
 
         // Get session to find current message count
         const session = await sessionsService.get(id, params);
@@ -3788,6 +3893,7 @@ async function main() {
                 prompt: data.prompt,
                 permissionMode: data.permissionMode,
                 stream: useStreaming,
+                messageSource,
               },
               params
             );
@@ -4107,20 +4213,30 @@ async function main() {
         // Get session to check status
         const session = await sessionsService.get(id, params);
 
-        // Check if session is actually running or awaiting permission
+        // Allow stop requests for RUNNING, AWAITING_PERMISSION, or STOPPING sessions
+        // STOPPING state is allowed to support retries when sessions get stuck
         if (
           session.status !== SessionStatus.RUNNING &&
-          session.status !== SessionStatus.AWAITING_PERMISSION
+          session.status !== SessionStatus.AWAITING_PERMISSION &&
+          session.status !== SessionStatus.STOPPING
         ) {
           return {
             success: false,
-            reason: `Session is not running (status: ${session.status})`,
+            reason: `Session cannot be stopped (status: ${session.status})`,
           };
         }
 
-        // Find the currently running task(s)
-        // Note: Using two separate queries to avoid $in operator which fails schema validation
-        let runningTasksArray: Task[] = [];
+        // If already in STOPPING state, this is a retry attempt
+        const isRetry = session.status === SessionStatus.STOPPING;
+        if (isRetry) {
+          console.log(`🔁 [Daemon] Retry stop request for session ${id.substring(0, 8)}`);
+        }
+
+        // Find the task to stop
+        // For retries, also check STOPPING tasks; otherwise check RUNNING and AWAITING_PERMISSION
+        // Note: Using separate queries to avoid $in operator which fails schema validation
+        let targetTasksArray: Task[] = [];
+
         // Query for RUNNING tasks
         const runningResult = await tasksService.find({
           query: {
@@ -4147,38 +4263,79 @@ async function main() {
           ? awaitingFindResult.data
           : awaitingFindResult;
 
-        runningTasksArray = [...runningTasks, ...awaitingTasks];
+        targetTasksArray = [...runningTasks, ...awaitingTasks];
 
-        if (runningTasksArray.length === 0) {
+        // If this is a retry, also check for STOPPING tasks, but only as fallback
+        if (isRetry && targetTasksArray.length === 0) {
+          const stoppingResult = await tasksService.find({
+            query: {
+              session_id: id,
+              status: TaskStatus.STOPPING,
+              $limit: 10,
+            },
+          });
+          const stoppingFindResult = stoppingResult as Task[] | Paginated<Task>;
+          const stoppingTasks = isPaginated(stoppingFindResult)
+            ? stoppingFindResult.data
+            : stoppingFindResult;
+          targetTasksArray = stoppingTasks;
+        }
+
+        if (targetTasksArray.length === 0) {
           return {
             success: false,
-            reason: 'No running tasks found',
+            reason: isRetry ? 'No active or stopping tasks found' : 'No running tasks found',
           };
         }
 
-        const latestTask = runningTasksArray[runningTasksArray.length - 1];
+        // Sort tasks by most recent activity (started_at or created_at) to ensure deterministic selection
+        targetTasksArray.sort((a, b) => {
+          const timeA = new Date(a.started_at || a.created_at).getTime();
+          const timeB = new Date(b.started_at || b.created_at).getTime();
+          return timeB - timeA; // Most recent first
+        });
+
+        const latestTask = targetTasksArray[0];
 
         // PHASE 1: Atomically update task AND session to STOPPING
-        try {
-          // Update task status to STOPPING
-          await tasksService.patch(latestTask.task_id, {
-            status: TaskStatus.STOPPING,
-          });
+        // Skip task/session transition for retries, but re-assert ready_for_prompt
+        let didTransitionToStopping = false;
+        if (!isRetry) {
+          try {
+            // Update task status to STOPPING
+            await tasksService.patch(latestTask.task_id, {
+              status: TaskStatus.STOPPING,
+            });
 
-          // Update session status to STOPPING
-          await app.service('sessions').patch(
-            id,
-            {
-              status: SessionStatus.STOPPING,
-              ready_for_prompt: false, // Prevent new prompts during stop
-            },
-            params
-          );
-        } catch (error) {
-          return {
-            success: false,
-            reason: `Failed to update status: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          };
+            // Update session status to STOPPING
+            await app.service('sessions').patch(
+              id,
+              {
+                status: SessionStatus.STOPPING,
+                ready_for_prompt: false, // Prevent new prompts during stop
+              },
+              params
+            );
+            didTransitionToStopping = true;
+          } catch (error) {
+            return {
+              success: false,
+              reason: `Failed to update status: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            };
+          }
+        } else {
+          // For retries, re-assert ready_for_prompt to ensure consistency
+          try {
+            await app.service('sessions').patch(
+              id,
+              {
+                ready_for_prompt: false,
+              },
+              params
+            );
+          } catch (error) {
+            console.warn(`⚠️  [Daemon] Failed to re-assert ready_for_prompt on retry:`, error);
+          }
         }
 
         // PHASE 2: Use bulletproof stop handler with ACK protocol
@@ -4192,7 +4349,8 @@ async function main() {
         );
 
         // PHASE 3: Handle failed stop (revert to RUNNING)
-        if (!result.success) {
+        // Only revert if WE transitioned to STOPPING (not on retries of already-STOPPING sessions)
+        if (!result.success && didTransitionToStopping) {
           try {
             await tasksService.patch(latestTask.task_id, {
               status: TaskStatus.RUNNING,
@@ -4880,53 +5038,137 @@ async function main() {
   );
 
   // POST /worktrees/:id/archive-or-delete - Archive or delete worktree
-  registerAuthenticatedRoute(
-    app,
-    '/worktrees/:id/archive-or-delete',
-    {
-      async create(data: unknown, params: RouteParams) {
-        const id = params.route?.id;
-        if (!id) throw new Error('Worktree ID required');
-        const options = data as {
-          metadataAction: 'archive' | 'delete';
-          filesystemAction: 'preserved' | 'cleaned' | 'deleted';
-        };
-        return worktreesService.archiveOrDelete(
-          id as import('@agor/core/types').WorktreeID,
-          options,
-          params
-        );
-      },
-      // biome-ignore lint/suspicious/noExplicitAny: Service type not compatible with Express
-    } as any,
-    {
-      create: { role: 'admin', action: 'archive or delete worktrees' },
+  app.use('/worktrees/:id/archive-or-delete', {
+    async create(data: unknown, params: RouteParams) {
+      const id = params.route?.id;
+      if (!id) throw new Error('Worktree ID required');
+      const options = data as {
+        metadataAction: 'archive' | 'delete';
+        filesystemAction: 'preserved' | 'cleaned' | 'deleted';
+      };
+      return worktreesService.archiveOrDelete(
+        id as import('@agor/core/types').WorktreeID,
+        options,
+        params
+      );
     },
-    requireAuth
-  );
+  });
+
+  // Add RBAC hooks for archive-or-delete route
+  app.service('/worktrees/:id/archive-or-delete').hooks({
+    before: {
+      create: [
+        requireAuth,
+        requireMinimumRole('member', 'archive or delete worktrees'),
+        // Load worktree from route param and check ownership (always run, even if RBAC disabled)
+        async (context: HookContext) => {
+          const id = context.params.route?.id;
+          if (!id) throw new Error('Worktree ID required');
+
+          const worktree = await worktreeRepository.findById(id);
+          if (!worktree) {
+            throw new Forbidden(`Worktree not found: ${id}`);
+          }
+
+          // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+          const userId = (context.params as any).user?.user_id;
+          const isOwner = userId
+            ? await worktreeRepository.isOwner(worktree.worktree_id, userId)
+            : false;
+
+          // Cache for downstream hooks
+          // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+          (context.params as any).worktree = worktree;
+          // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+          (context.params as any).isWorktreeOwner = isOwner;
+
+          return context;
+        },
+        // Always enforce ownership check (even when RBAC disabled)
+        worktreeRbacEnabled
+          ? ensureWorktreePermission('all', 'archive or delete worktrees')
+          : (context: HookContext) => {
+              // When RBAC disabled, still require worktree ownership OR admin role
+              // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+              const isOwner = (context.params as any).isWorktreeOwner;
+              // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+              const userRole = (context.params as any).user?.role;
+
+              if (!isOwner && userRole !== 'admin' && userRole !== 'owner') {
+                throw new Forbidden(
+                  'You must be the worktree owner or a global admin to archive/delete worktrees'
+                );
+              }
+              return context;
+            },
+      ],
+    },
+  });
 
   // POST /worktrees/:id/unarchive - Unarchive worktree
-  registerAuthenticatedRoute(
-    app,
-    '/worktrees/:id/unarchive',
-    {
-      async create(data: unknown, params: RouteParams) {
-        const id = params.route?.id;
-        if (!id) throw new Error('Worktree ID required');
-        const options = data as { boardId?: import('@agor/core/types').BoardID };
-        return worktreesService.unarchive(
-          id as import('@agor/core/types').WorktreeID,
-          options,
-          params
-        );
-      },
-      // biome-ignore lint/suspicious/noExplicitAny: Service type not compatible with Express
-    } as any,
-    {
-      create: { role: 'admin', action: 'unarchive worktrees' },
+  app.use('/worktrees/:id/unarchive', {
+    async create(data: unknown, params: RouteParams) {
+      const id = params.route?.id;
+      if (!id) throw new Error('Worktree ID required');
+      const options = data as { boardId?: import('@agor/core/types').BoardID };
+      return worktreesService.unarchive(
+        id as import('@agor/core/types').WorktreeID,
+        options,
+        params
+      );
     },
-    requireAuth
-  );
+  });
+
+  // Add RBAC hooks for unarchive route
+  app.service('/worktrees/:id/unarchive').hooks({
+    before: {
+      create: [
+        requireAuth,
+        requireMinimumRole('member', 'unarchive worktrees'),
+        // Load worktree from route param and check ownership (always run, even if RBAC disabled)
+        async (context: HookContext) => {
+          const id = context.params.route?.id;
+          if (!id) throw new Error('Worktree ID required');
+
+          const worktree = await worktreeRepository.findById(id);
+          if (!worktree) {
+            throw new Forbidden(`Worktree not found: ${id}`);
+          }
+
+          // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+          const userId = (context.params as any).user?.user_id;
+          const isOwner = userId
+            ? await worktreeRepository.isOwner(worktree.worktree_id, userId)
+            : false;
+
+          // Cache for downstream hooks
+          // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+          (context.params as any).worktree = worktree;
+          // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+          (context.params as any).isWorktreeOwner = isOwner;
+
+          return context;
+        },
+        // Always enforce ownership check (even when RBAC disabled)
+        worktreeRbacEnabled
+          ? ensureWorktreePermission('all', 'unarchive worktrees')
+          : (context: HookContext) => {
+              // When RBAC disabled, still require worktree ownership OR admin role
+              // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+              const isOwner = (context.params as any).isWorktreeOwner;
+              // biome-ignore lint/suspicious/noExplicitAny: FeathersJS params type
+              const userRole = (context.params as any).user?.role;
+
+              if (!isOwner && userRole !== 'admin' && userRole !== 'owner') {
+                throw new Forbidden(
+                  'You must be the worktree owner or a global admin to unarchive worktrees'
+                );
+              }
+              return context;
+            },
+      ],
+    },
+  });
 
   // GET /worktrees/logs?worktree_id=xxx - Get environment logs
   registerAuthenticatedRoute(
@@ -5432,9 +5674,21 @@ async function main() {
     tickInterval: 30000, // 30 seconds
     gracePeriod: 120000, // 2 minutes
     debug: process.env.NODE_ENV !== 'production',
+    unixUserMode: config.execution?.unix_user_mode ?? 'simple',
   });
   schedulerService.start();
   console.log(`🔄 Scheduler started (tick interval: 30s)`);
+
+  // Initialize gateway: refresh channel state cache, then start Socket Mode listeners
+  const gatewayService = app.service('gateway') as unknown as GatewayService;
+  gatewayService
+    .refreshChannelState()
+    .then(() => {
+      return gatewayService.startListeners();
+    })
+    .catch((error: unknown) => {
+      console.error('[gateway] Failed to start listeners:', error);
+    });
 
   // Graceful shutdown handler
   const shutdown = async (signal: string) => {
@@ -5447,6 +5701,10 @@ async function main() {
       // Clean up terminal sessions
       console.log('🖥️  Cleaning up terminal sessions...');
       terminalsService.cleanup();
+
+      // Stop gateway listeners
+      console.log('🌐 Stopping gateway listeners...');
+      await gatewayService.stopListeners();
 
       // Stop scheduler
       console.log('🔄 Stopping scheduler...');

@@ -37,7 +37,7 @@
   </table>
 </div>
 
-**[→ Watch unscripted demo on YouTube](https://www.youtube.com/watch?v=qiYHw20zjzE)** (13 minutes)
+**[→ Watch unscripted demo on YouTube](https://www.youtube.com/watch?v=3in0qh7ZH0g)** (13 minutes)
 
 ---
 
@@ -298,6 +298,14 @@ Highlights:
 - **Match CLI-Native Features** — SDKs are evolving rapidly and exposing more functionality. Push integrations deeper to match all key features available in the underlying CLIs
 - **Bring Your Own IDE** — Connect VSCode, Cursor, or any IDE directly to Agor-managed worktrees via SSH/Remote
 - **Unix User Integration** — Enable true multi-tenancy with per-user Unix isolation for secure collaboration. [Read the exploration →](https://github.com/preset-io/agor/blob/main/context/explorations/unix-user-integration.md)
+
+---
+
+## Community
+
+- **[Discord](https://discord.gg/HZKWXfgc)** - Join our Discord community for support and discussion
+- **[GitHub Discussions](https://github.com/preset-io/agor/discussions)** - Ask questions, share ideas
+- **[GitHub Issues](https://github.com/preset-io/agor/issues)** - Report bugs, request features
 
 ---
 

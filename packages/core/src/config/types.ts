@@ -59,6 +59,25 @@ export interface AgorDaemonSettings {
    */
   public_url?: string;
 
+  /**
+   * Base URL for external/user-facing links (e.g., session URLs in Slack messages).
+   *
+   * Used to generate clickable URLs to sessions, boards, and other resources
+   * that are sent to external platforms like Slack, email, etc.
+   *
+   * Defaults to `http://localhost:{port}` in development.
+   * Should be set to your public domain in production (e.g., https://agor.example.com).
+   *
+   * Note: Should NOT include trailing slash.
+   *
+   * @example
+   * ```yaml
+   * daemon:
+   *   base_url: https://agor.sandbox.preset.zone
+   * ```
+   */
+  base_url?: string;
+
   /** Allow anonymous access (default: true for local mode) */
   allowAnonymous?: boolean;
 
@@ -274,6 +293,7 @@ export interface AgorPathSettings {
  */
 export enum CredentialKey {
   ANTHROPIC_API_KEY = 'ANTHROPIC_API_KEY',
+  ANTHROPIC_BASE_URL = 'ANTHROPIC_BASE_URL',
   OPENAI_API_KEY = 'OPENAI_API_KEY',
   GEMINI_API_KEY = 'GEMINI_API_KEY',
 }
@@ -284,6 +304,10 @@ export enum CredentialKey {
 export interface AgorCredentials {
   /** Anthropic API key for Claude Code */
   ANTHROPIC_API_KEY?: string;
+
+  /** Custom Anthropic API base URL (default: https://api.anthropic.com)
+   * Useful for proxies, Claude Enterprise deployments, or third-party compatible APIs */
+  ANTHROPIC_BASE_URL?: string;
 
   /** OpenAI API key for Codex */
   OPENAI_API_KEY?: string;

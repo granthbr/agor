@@ -28,6 +28,7 @@ function maskCredentials(config: AgorConfig): AgorConfig {
     ...config,
     credentials: {
       ANTHROPIC_API_KEY: maskApiKey(config.credentials.ANTHROPIC_API_KEY),
+      ANTHROPIC_BASE_URL: config.credentials.ANTHROPIC_BASE_URL,
       OPENAI_API_KEY: maskApiKey(config.credentials.OPENAI_API_KEY),
       GEMINI_API_KEY: maskApiKey(config.credentials.GEMINI_API_KEY),
     },
@@ -86,6 +87,7 @@ export class ConfigService {
     apiKey: string | null;
     source: 'user' | 'config' | 'env' | 'native';
     useNativeAuth: boolean;
+    decryptionFailed?: boolean;
   }> {
     const { taskId, keyName } = data;
 
@@ -114,6 +116,7 @@ export class ConfigService {
       apiKey: result.apiKey ?? null,
       source: result.source === 'none' ? 'native' : result.source,
       useNativeAuth: result.useNativeAuth,
+      ...(result.decryptionFailed && { decryptionFailed: true }),
     };
   }
 

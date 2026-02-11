@@ -108,7 +108,8 @@ export function setupMCPRoutes(app: Application): void {
             // Session tools
             {
               name: 'agor_sessions_list',
-              description: 'List all sessions accessible to the current user',
+              description:
+                'List all sessions accessible to the current user. Each session includes a `url` field with a clickable link to view the session in the UI.',
               inputSchema: {
                 type: 'object',
                 properties: {
@@ -135,7 +136,7 @@ export function setupMCPRoutes(app: Application): void {
             {
               name: 'agor_sessions_get',
               description:
-                'Get detailed information about a specific session, including genealogy and current state',
+                'Get detailed information about a specific session, including genealogy and current state. The response includes a `url` field with a clickable link to view the session in the UI.',
               inputSchema: {
                 type: 'object',
                 properties: {
@@ -159,7 +160,7 @@ export function setupMCPRoutes(app: Application): void {
             {
               name: 'agor_sessions_spawn',
               description:
-                'Spawn a child session (subsession) for delegating work to another agent. Creates a new session, executes the prompt, and tracks genealogy.',
+                'Spawn a child session (subsession) for delegating work to another agent. Creates a new session, executes the prompt, and tracks genealogy. Session configuration is inherited from parent (same agent) or user defaults (different agent).',
               inputSchema: {
                 type: 'object',
                 properties: {
@@ -177,61 +178,6 @@ export function setupMCPRoutes(app: Application): void {
                     enum: ['claude-code', 'codex', 'gemini', 'opencode'],
                     description:
                       'Which agent to use for the subsession (defaults to same as parent)',
-                  },
-                  permissionMode: {
-                    type: 'string',
-                    enum: [
-                      'default',
-                      'acceptEdits',
-                      'bypassPermissions',
-                      'plan',
-                      'ask',
-                      'auto',
-                      'on-failure',
-                      'allow-all',
-                    ],
-                    description: 'Permission mode override (defaults based on config preset)',
-                  },
-                  modelConfig: {
-                    type: 'object',
-                    properties: {
-                      mode: {
-                        type: 'string',
-                        enum: ['alias', 'exact'],
-                      },
-                      model: {
-                        type: 'string',
-                      },
-                      thinkingMode: {
-                        type: 'string',
-                        enum: ['auto', 'manual', 'off'],
-                      },
-                      manualThinkingTokens: {
-                        type: 'number',
-                      },
-                    },
-                    description: 'Model configuration override',
-                  },
-                  codexSandboxMode: {
-                    type: 'string',
-                    enum: ['read-only', 'workspace-write', 'danger-full-access'],
-                    description: 'Codex sandbox mode (codex only)',
-                  },
-                  codexApprovalPolicy: {
-                    type: 'string',
-                    enum: ['untrusted', 'on-request', 'on-failure', 'never'],
-                    description: 'Codex approval policy (codex only)',
-                  },
-                  codexNetworkAccess: {
-                    type: 'boolean',
-                    description: 'Codex network access (codex only)',
-                  },
-                  mcpServerIds: {
-                    type: 'array',
-                    items: {
-                      type: 'string',
-                    },
-                    description: 'MCP server IDs to attach to spawned session',
                   },
                   enableCallback: {
                     type: 'boolean',
@@ -260,7 +206,7 @@ export function setupMCPRoutes(app: Application): void {
             {
               name: 'agor_sessions_prompt',
               description:
-                'Prompt an existing session to continue work. Supports three modes: continue (append to conversation), fork (branch at decision point), or subsession (delegate to child agent).',
+                'Prompt an existing session to continue work. Supports three modes: continue (append to conversation), fork (branch at decision point), or subsession (delegate to child agent). Configuration is inherited from parent session or user defaults.',
               inputSchema: {
                 type: 'object',
                 properties: {
@@ -282,22 +228,7 @@ export function setupMCPRoutes(app: Application): void {
                     type: 'string',
                     enum: ['claude-code', 'codex', 'gemini'],
                     description:
-                      'Override parent agent (for fork/subsession only, defaults to parent agent)',
-                  },
-                  permissionMode: {
-                    type: 'string',
-                    enum: [
-                      'default',
-                      'acceptEdits',
-                      'bypassPermissions',
-                      'plan',
-                      'ask',
-                      'auto',
-                      'on-failure',
-                      'allow-all',
-                    ],
-                    description:
-                      'Override permission mode (for fork/subsession only, defaults to parent mode)',
+                      'Agent for subsession (subsession mode only, defaults to parent agent). Fork mode always uses parent agent.',
                   },
                   title: {
                     type: 'string',
@@ -314,7 +245,7 @@ export function setupMCPRoutes(app: Application): void {
             {
               name: 'agor_sessions_create',
               description:
-                'Create a new session in an existing worktree. Useful for starting fresh work in the same codebase without forking or spawning.',
+                'Create a new session in an existing worktree. Useful for starting fresh work in the same codebase without forking or spawning. Session configuration (permissions, model, MCP servers) is automatically inherited from user defaults.',
               inputSchema: {
                 type: 'object',
                 properties: {
@@ -335,30 +266,10 @@ export function setupMCPRoutes(app: Application): void {
                     type: 'string',
                     description: 'Session description (optional)',
                   },
-                  permissionMode: {
-                    type: 'string',
-                    enum: [
-                      'default',
-                      'acceptEdits',
-                      'bypassPermissions',
-                      'plan',
-                      'ask',
-                      'auto',
-                      'on-failure',
-                      'allow-all',
-                    ],
-                    description:
-                      'Permission mode for tool approval (optional, defaults based on agenticTool)',
-                  },
                   contextFiles: {
                     type: 'array',
                     items: { type: 'string' },
                     description: 'Context file paths to load (optional)',
-                  },
-                  mcpServerIds: {
-                    type: 'array',
-                    items: { type: 'string' },
-                    description: 'MCP server IDs to attach (optional)',
                   },
                   initialPrompt: {
                     type: 'string',
@@ -372,7 +283,7 @@ export function setupMCPRoutes(app: Application): void {
             {
               name: 'agor_sessions_update',
               description:
-                'Update session metadata (title, description, status, permissions). Useful for agents to self-document their work or adjust permissions.',
+                'Update session metadata (title, description, status). Useful for agents to self-document their work.',
               inputSchema: {
                 type: 'object',
                 properties: {
@@ -392,20 +303,6 @@ export function setupMCPRoutes(app: Application): void {
                     type: 'string',
                     enum: ['idle', 'running', 'completed', 'failed'],
                     description: 'New session status (optional)',
-                  },
-                  permissionMode: {
-                    type: 'string',
-                    enum: [
-                      'default',
-                      'acceptEdits',
-                      'bypassPermissions',
-                      'plan',
-                      'ask',
-                      'auto',
-                      'on-failure',
-                      'allow-all',
-                    ],
-                    description: 'New permission mode (optional)',
                   },
                 },
                 required: ['sessionId'],
@@ -607,7 +504,7 @@ export function setupMCPRoutes(app: Application): void {
                   notes: {
                     type: ['string', 'null'],
                     description:
-                      'Freeform notes about the worktree. Pass null or empty string to clear.',
+                      'Freeform notes about the worktree (markdown supported). Pass null or empty string to clear.',
                   },
                   boardId: {
                     type: ['string', 'null'],
@@ -626,7 +523,7 @@ export function setupMCPRoutes(app: Application): void {
             {
               name: 'agor_worktrees_set_zone',
               description:
-                "Pin a worktree to a zone on a board and optionally trigger the zone's prompt template. Calculates zone center position automatically and creates board association.",
+                "Pin a worktree to a zone on a board and optionally trigger the zone's prompt template. Calculates zone center position automatically and creates board association. If the zone has an 'always_new' trigger, a new session is automatically created and the prompt template is executed (matching UI drag-drop behavior). For 'show_picker' zones, use triggerTemplate + targetSessionId to send to an existing session.",
               inputSchema: {
                 type: 'object',
                 properties: {
@@ -646,7 +543,7 @@ export function setupMCPRoutes(app: Application): void {
                   triggerTemplate: {
                     type: 'boolean',
                     description:
-                      "Whether to execute the zone's prompt template after pinning (default: false)",
+                      "Whether to execute the zone's prompt template after pinning (default: false). When true, sends the rendered template to targetSessionId. For zones with always_new triggers, this is handled automatically without needing to set this flag.",
                   },
                 },
                 required: ['worktreeId', 'zoneId'],
@@ -747,7 +644,8 @@ export function setupMCPRoutes(app: Application): void {
             // Board tools
             {
               name: 'agor_boards_get',
-              description: 'Get information about a board, including zones and layout',
+              description:
+                'Get information about a board, including zones and layout. The response includes a `url` field with a clickable link to view the board in the UI.',
               inputSchema: {
                 type: 'object',
                 properties: {
@@ -761,7 +659,8 @@ export function setupMCPRoutes(app: Application): void {
             },
             {
               name: 'agor_boards_list',
-              description: 'List all boards accessible to the current user',
+              description:
+                'List all boards accessible to the current user. Each board includes a `url` field with a clickable link to view the board in the UI.',
               inputSchema: {
                 type: 'object',
                 properties: {
@@ -1216,16 +1115,13 @@ export function setupMCPRoutes(app: Application): void {
             });
           }
 
+          // Build spawn config - only include fields we allow via MCP
+          // Explicitly omit permissionMode, modelConfig, codex*, and mcpServerIds
+          // These are managed via user defaults or inherited from parent
           const spawnData: Partial<import('@agor/core/types').SpawnConfig> = {
             prompt: args.prompt,
             title: args.title,
             agent: args.agenticTool as AgenticToolName | undefined,
-            permissionMode: args.permissionMode,
-            modelConfig: args.modelConfig,
-            codexSandboxMode: args.codexSandboxMode,
-            codexApprovalPolicy: args.codexApprovalPolicy,
-            codexNetworkAccess: args.codexNetworkAccess,
-            mcpServerIds: args.mcpServerIds,
             enableCallback: args.enableCallback,
             includeLastMessage: args.includeLastMessage,
             includeOriginalPrompt: args.includeOriginalPrompt,
@@ -1302,7 +1198,6 @@ export function setupMCPRoutes(app: Application): void {
             const promptResponse = await app.service('/sessions/:id/prompt').create(
               {
                 prompt: args.prompt,
-                permissionMode: args.permissionMode,
                 stream: true,
               },
               {
@@ -1348,32 +1243,9 @@ export function setupMCPRoutes(app: Application): void {
               app.service('sessions') as unknown as SessionsServiceImpl
             ).fork(args.sessionId, forkData, baseServiceParams);
 
-            // Override agentic tool if specified
-            if (args.agenticTool) {
-              await app
-                .service('sessions')
-                .patch(
-                  forkedSession.session_id,
-                  { agentic_tool: args.agenticTool as AgenticToolName },
-                  baseServiceParams
-                );
-            }
-
-            // Override permission mode if specified
-            if (args.permissionMode) {
-              const { mapPermissionMode } = await import('@agor/core/utils/permission-mode-mapper');
-              const mappedMode = mapPermissionMode(args.permissionMode, forkedSession.agentic_tool);
-              await app.service('sessions').patch(
-                forkedSession.session_id,
-                {
-                  permission_config: {
-                    ...forkedSession.permission_config,
-                    mode: mappedMode,
-                  },
-                },
-                baseServiceParams
-              );
-            }
+            // Note: We no longer allow changing agenticTool in fork mode via MCP.
+            // Fork inherits the same agent as parent. If you need a different agent,
+            // use 'subsession' mode instead, which properly handles config for different tools.
 
             // Set custom title if provided
             if (args.title) {
@@ -1422,12 +1294,7 @@ export function setupMCPRoutes(app: Application): void {
             // Mode: subsession - spawn child session (reuse existing spawn logic)
             console.log(`🌱 MCP spawning subsession from ${args.sessionId.substring(0, 8)}`);
 
-            const spawnData: {
-              prompt: string;
-              title?: string;
-              agentic_tool?: AgenticToolName;
-              task_id?: string;
-            } = {
+            const spawnData: Partial<import('@agor/core/types').SpawnConfig> = {
               prompt: args.prompt,
             };
 
@@ -1436,7 +1303,7 @@ export function setupMCPRoutes(app: Application): void {
             }
 
             if (args.agenticTool) {
-              spawnData.agentic_tool = args.agenticTool as AgenticToolName;
+              spawnData.agent = args.agenticTool as AgenticToolName;
             }
 
             if (args.taskId) {
@@ -1448,26 +1315,11 @@ export function setupMCPRoutes(app: Application): void {
               app.service('sessions') as unknown as SessionsServiceImpl
             ).spawn(args.sessionId, spawnData, baseServiceParams);
 
-            // Override permission mode if specified
-            if (args.permissionMode) {
-              const { mapPermissionMode } = await import('@agor/core/utils/permission-mode-mapper');
-              const mappedMode = mapPermissionMode(args.permissionMode, childSession.agentic_tool);
-              await app.service('sessions').patch(
-                childSession.session_id,
-                {
-                  permission_config: {
-                    ...childSession.permission_config,
-                    mode: mappedMode,
-                  },
-                },
-                baseServiceParams
-              );
-            }
+            // Permission mode is inherited from spawn() method (parent session or user defaults)
+            // No explicit override allowed via MCP to avoid complexity
 
-            // Get updated session
-            const updatedSession = await app
-              .service('sessions')
-              .get(childSession.session_id, baseServiceParams);
+            // Use childSession directly (no need to refetch)
+            const updatedSession = childSession;
 
             // Trigger prompt execution (spawns start fresh by default - see query-builder.ts)
             console.log(`🚀 Triggering prompt execution for subsession`);
@@ -1527,8 +1379,8 @@ export function setupMCPRoutes(app: Application): void {
           const currentSha = await getGitState(worktree.path);
           const currentRef = await getCurrentBranch(worktree.path);
 
-          // Determine permission mode
-          // Priority: explicit param > user defaults > system defaults
+          // Determine permission mode from user defaults only
+          // MCP tools should not override user preferences - they're too complex for agents to manage
           const { getDefaultPermissionMode } = await import('@agor/core/types');
           const { mapPermissionMode } = await import('@agor/core/utils/permission-mode-mapper');
           const agenticTool = args.agenticTool as AgenticToolName;
@@ -1536,9 +1388,7 @@ export function setupMCPRoutes(app: Application): void {
           // Check user's default_agentic_config for this tool
           const userToolDefaults = user?.default_agentic_config?.[agenticTool];
           const requestedMode =
-            args.permissionMode ||
-            userToolDefaults?.permissionMode ||
-            getDefaultPermissionMode(agenticTool);
+            userToolDefaults?.permissionMode || getDefaultPermissionMode(agenticTool);
           const permissionMode = mapPermissionMode(requestedMode, agenticTool);
 
           // Build permission config (including Codex-specific settings if applicable)
@@ -1560,7 +1410,8 @@ export function setupMCPRoutes(app: Application): void {
             };
           }
 
-          // Build model config (if user has defaults for this tool and a model is specified)
+          // Build model config from user defaults (only if a model is specified)
+          // Other fields like thinkingMode require a model context to be meaningful
           let modelConfig: Record<string, unknown> | undefined;
           if (userToolDefaults?.modelConfig?.model) {
             modelConfig = {
@@ -1572,9 +1423,8 @@ export function setupMCPRoutes(app: Application): void {
             };
           }
 
-          // Determine MCP server IDs to attach
-          // Priority: explicit param > user defaults > empty array
-          const mcpServerIds = args.mcpServerIds || userToolDefaults?.mcpServerIds || [];
+          // Determine MCP server IDs from user defaults only
+          const mcpServerIds = userToolDefaults?.mcpServerIds || [];
 
           // Create session
           const sessionData: Record<string, unknown> = {
@@ -1601,7 +1451,7 @@ export function setupMCPRoutes(app: Application): void {
           const session = await app.service('sessions').create(sessionData, baseServiceParams);
           console.log(`✅ Session created: ${session.session_id.substring(0, 8)}`);
 
-          // Attach MCP servers (from explicit param or user defaults)
+          // Attach MCP servers from user defaults
           if (mcpServerIds && mcpServerIds.length > 0) {
             for (const mcpServerId of mcpServerIds) {
               await app.service('session-mcp-servers').create(
@@ -1664,14 +1514,14 @@ export function setupMCPRoutes(app: Application): void {
           }
 
           // Validate at least one field is provided
-          if (!args.title && !args.description && !args.status && !args.permissionMode) {
+          if (!args.title && !args.description && !args.status) {
             return res.status(400).json({
               jsonrpc: '2.0',
               id: mcpRequest.id,
               error: {
                 code: -32602,
                 message:
-                  'Invalid params: at least one field (title, description, status, permissionMode) must be provided',
+                  'Invalid params: at least one field (title, description, status) must be provided',
               },
             });
           }
@@ -1683,19 +1533,6 @@ export function setupMCPRoutes(app: Application): void {
           if (args.title !== undefined) updates.title = args.title;
           if (args.description !== undefined) updates.description = args.description;
           if (args.status !== undefined) updates.status = args.status;
-
-          // Handle permission mode update
-          if (args.permissionMode !== undefined) {
-            const currentSession = await app
-              .service('sessions')
-              .get(args.sessionId, baseServiceParams);
-            const { mapPermissionMode } = await import('@agor/core/utils/permission-mode-mapper');
-            const mappedMode = mapPermissionMode(args.permissionMode, currentSession.agentic_tool);
-            updates.permission_config = {
-              ...currentSession.permission_config,
-              mode: mappedMode,
-            };
-          }
 
           // Update session
           const session = await app
@@ -2246,17 +2083,6 @@ export function setupMCPRoutes(app: Application): void {
             });
           }
 
-          if (triggerTemplate && !targetSessionId) {
-            return res.status(400).json({
-              jsonrpc: '2.0',
-              id: mcpRequest.id,
-              error: {
-                code: -32602,
-                message: 'Invalid params: targetSessionId is required when triggerTemplate is true',
-              },
-            });
-          }
-
           console.log(`📍 MCP pinning worktree ${worktreeId.substring(0, 8)} to zone ${zoneId}`);
 
           try {
@@ -2295,11 +2121,32 @@ export function setupMCPRoutes(app: Application): void {
             const WORKTREE_CARD_WIDTH = 500;
             const WORKTREE_CARD_HEIGHT = 200;
 
-            // Center the card within the zone by placing it at:
-            // - Horizontally: (zone.width - cardWidth) / 2
-            // - Vertically: (zone.height - cardHeight) / 2
-            const relativeX = (zone.width - WORKTREE_CARD_WIDTH) / 2;
-            const relativeY = (zone.height - WORKTREE_CARD_HEIGHT) / 2;
+            // Add jitter to prevent worktree cards from stacking exactly on top of each other
+            // Use adaptive padding to keep cards away from zone edges when possible
+            const DESIRED_PADDING = 80; // pixels from zone edges (best effort)
+
+            // Calculate adaptive padding that respects zone constraints
+            // For small zones, reduce padding to ensure cards fit within bounds
+            const maxPaddingX = Math.max(0, (zone.width - WORKTREE_CARD_WIDTH) / 2);
+            const maxPaddingY = Math.max(0, (zone.height - WORKTREE_CARD_HEIGHT) / 2);
+            const paddingX = Math.min(DESIRED_PADDING, maxPaddingX);
+            const paddingY = Math.min(DESIRED_PADDING, maxPaddingY);
+
+            // Calculate jitter range (clamped to >= 0 for small zones)
+            const jitterRangeX = Math.max(0, zone.width - WORKTREE_CARD_WIDTH - 2 * paddingX);
+            const jitterRangeY = Math.max(0, zone.height - WORKTREE_CARD_HEIGHT - 2 * paddingY);
+
+            // Generate random position within valid area
+            // For zones too small for jitter, cards will be centered (jitterRange = 0)
+            const relativeX = paddingX + Math.random() * jitterRangeX;
+            const relativeY = paddingY + Math.random() * jitterRangeY;
+
+            // Log warning if zone is smaller than card (card will overflow)
+            if (zone.width < WORKTREE_CARD_WIDTH || zone.height < WORKTREE_CARD_HEIGHT) {
+              console.warn(
+                `⚠️  Zone ${zoneId} is smaller than worktree card (${zone.width}x${zone.height} < ${WORKTREE_CARD_WIDTH}x${WORKTREE_CARD_HEIGHT}), card may overflow zone bounds`
+              );
+            }
 
             // Find or create board object for this worktree
             const boardObjectsService = app.service('board-objects') as unknown as {
@@ -2351,14 +2198,25 @@ export function setupMCPRoutes(app: Application): void {
               `✅ Worktree pinned to zone at relative position (${relativeX}, ${relativeY})`
             );
 
-            // Trigger zone prompt template if requested
-            let promptResult: { taskId?: string; note: string } | undefined;
-            if (triggerTemplate && zone.trigger?.template && targetSessionId) {
+            // Determine whether to fire zone trigger
+            // Priority:
+            // 1. Explicit triggerTemplate=true + targetSessionId → send to existing session
+            // 2. Zone has always_new trigger → auto-create session and execute
+            // 3. triggerTemplate=true but missing targetSessionId or template → return error note
+            // 4. Zone has show_picker trigger → return trigger info (agent picks action)
+            // 5. No trigger → just pin
+            let promptResult: { taskId?: string; sessionId?: string; note: string } | undefined;
+
+            const hasZoneTrigger =
+              zone.trigger?.template && zone.trigger.template.trim().length > 0;
+            const isAlwaysNew = hasZoneTrigger && zone.trigger!.behavior === 'always_new';
+
+            if (triggerTemplate && targetSessionId && hasZoneTrigger) {
+              // Case 1: Explicit trigger to an existing session (original behavior)
               console.log(
                 `🎯 Triggering zone prompt template for session ${targetSessionId.substring(0, 8)}`
               );
 
-              // Build template context
               const { renderTemplate } = await import('@agor/core/templates/handlebars-helpers');
               const templateContext = {
                 worktree: {
@@ -2379,10 +2237,9 @@ export function setupMCPRoutes(app: Application): void {
                 },
               };
 
-              const renderedPrompt = renderTemplate(zone.trigger.template, templateContext);
+              const renderedPrompt = renderTemplate(zone.trigger!.template, templateContext);
 
               if (renderedPrompt) {
-                // Send prompt to target session
                 const promptResponse = await app.service('/sessions/:id/prompt').create(
                   {
                     prompt: renderedPrompt,
@@ -2396,6 +2253,7 @@ export function setupMCPRoutes(app: Application): void {
 
                 promptResult = {
                   taskId: promptResponse.taskId,
+                  sessionId: targetSessionId,
                   note: 'Zone trigger prompt sent to target session',
                 };
                 console.log(
@@ -2407,6 +2265,180 @@ export function setupMCPRoutes(app: Application): void {
                 };
                 console.warn('⚠️  Zone trigger template rendered to empty string');
               }
+            } else if (isAlwaysNew) {
+              // Case 2: always_new — auto-create session and execute trigger
+              // Fires both when no flags are set AND when triggerTemplate=true without targetSessionId
+              console.log(
+                `🎯 Zone has always_new trigger, auto-creating session for worktree ${worktreeId.substring(0, 8)}`
+              );
+
+              const { renderTemplate } = await import('@agor/core/templates/handlebars-helpers');
+              const templateContext = {
+                worktree: {
+                  name: worktree.name,
+                  ref: worktree.ref,
+                  issue_url: worktree.issue_url,
+                  pull_request_url: worktree.pull_request_url,
+                  notes: worktree.notes,
+                  custom_context: worktree.custom_context,
+                },
+                board: {
+                  name: board.name,
+                  custom_context: board.custom_context,
+                },
+                zone: {
+                  label: zone.label,
+                  status: zone.status,
+                },
+              };
+
+              const renderedPrompt = renderTemplate(zone.trigger!.template, templateContext);
+
+              if (renderedPrompt) {
+                // Determine agent from trigger config, validate against known values
+                const validAgents: AgenticToolName[] = [
+                  'claude-code',
+                  'codex',
+                  'gemini',
+                  'opencode',
+                ];
+                const rawAgent = zone.trigger!.agent;
+                const agenticTool: AgenticToolName =
+                  rawAgent && validAgents.includes(rawAgent) ? rawAgent : 'claude-code';
+
+                // Fetch user data for session creation context
+                const user = await app.service('users').get(context.userId, baseServiceParams);
+
+                // Get current git state
+                const { getGitState, getCurrentBranch } = await import('@agor/core/git');
+                const currentSha = await getGitState(worktree.path);
+                const currentRef = await getCurrentBranch(worktree.path);
+
+                // Resolve permission mode from user defaults
+                const { getDefaultPermissionMode } = await import('@agor/core/types');
+                const { mapPermissionMode } = await import(
+                  '@agor/core/utils/permission-mode-mapper'
+                );
+                const userToolDefaults = user?.default_agentic_config?.[agenticTool];
+                const requestedMode =
+                  userToolDefaults?.permissionMode || getDefaultPermissionMode(agenticTool);
+                const permissionMode = mapPermissionMode(requestedMode, agenticTool);
+
+                // Build permission config
+                const permissionConfig: Record<string, unknown> = {
+                  mode: permissionMode,
+                  allowedTools: [],
+                };
+                if (
+                  agenticTool === 'codex' &&
+                  userToolDefaults?.codexSandboxMode &&
+                  userToolDefaults?.codexApprovalPolicy
+                ) {
+                  permissionConfig.codex = {
+                    sandboxMode: userToolDefaults.codexSandboxMode,
+                    approvalPolicy: userToolDefaults.codexApprovalPolicy,
+                    networkAccess: userToolDefaults.codexNetworkAccess,
+                  };
+                }
+
+                // Build model config from user defaults (only if a model is specified)
+                // Other fields like thinkingMode require a model context to be meaningful
+                let modelConfig: Record<string, unknown> | undefined;
+                if (userToolDefaults?.modelConfig?.model) {
+                  modelConfig = {
+                    mode: userToolDefaults.modelConfig.mode || 'alias',
+                    model: userToolDefaults.modelConfig.model,
+                    updated_at: new Date().toISOString(),
+                    thinkingMode: userToolDefaults.modelConfig.thinkingMode,
+                    manualThinkingTokens: userToolDefaults.modelConfig.manualThinkingTokens,
+                  };
+                }
+
+                // Resolve MCP server IDs from user defaults
+                const mcpServerIds = userToolDefaults?.mcpServerIds || [];
+
+                // Create new session
+                const sessionData: Record<string, unknown> = {
+                  worktree_id: worktreeId,
+                  agentic_tool: agenticTool,
+                  status: 'idle',
+                  description: `Session from zone "${zone.label}"`,
+                  created_by: context.userId,
+                  unix_username: user.unix_username,
+                  permission_config: permissionConfig,
+                  ...(modelConfig && { model_config: modelConfig }),
+                  git_state: {
+                    ref: currentRef,
+                    base_sha: currentSha,
+                    current_sha: currentSha,
+                  },
+                  genealogy: { children: [] },
+                  tasks: [],
+                  message_count: 0,
+                };
+
+                const newSession = await app
+                  .service('sessions')
+                  .create(sessionData, baseServiceParams);
+                console.log(
+                  `✅ Auto-created session ${newSession.session_id.substring(0, 8)} (${agenticTool})`
+                );
+
+                // Attach MCP servers from user defaults
+                if (mcpServerIds.length > 0) {
+                  for (const mcpServerId of mcpServerIds) {
+                    await app.service('session-mcp-servers').create(
+                      {
+                        session_id: newSession.session_id,
+                        mcp_server_id: mcpServerId,
+                      },
+                      baseServiceParams
+                    );
+                  }
+                  console.log(`✅ Attached ${mcpServerIds.length} MCP servers`);
+                }
+
+                // Send rendered prompt to new session
+                const promptResponse = await app.service('/sessions/:id/prompt').create(
+                  {
+                    prompt: renderedPrompt,
+                    stream: true,
+                  },
+                  {
+                    ...baseServiceParams,
+                    route: { id: newSession.session_id },
+                  }
+                );
+
+                promptResult = {
+                  taskId: promptResponse.taskId,
+                  sessionId: newSession.session_id,
+                  note: `always_new trigger: created session ${newSession.session_id.substring(0, 8)} (${agenticTool}) and sent prompt`,
+                };
+                console.log(
+                  `✅ Zone trigger executed: task ${promptResponse.taskId.substring(0, 8)}`
+                );
+              } else {
+                promptResult = {
+                  note: 'Zone trigger template rendered to empty string (check template syntax)',
+                };
+                console.warn('⚠️  Zone trigger template rendered to empty string');
+              }
+            } else if (triggerTemplate && !hasZoneTrigger) {
+              // Case 3: triggerTemplate requested but zone has no template configured
+              promptResult = {
+                note: `Zone "${zone.label}" has no trigger template configured. Add a trigger template to the zone via agor_boards_update first.`,
+              };
+            } else if (triggerTemplate && !targetSessionId) {
+              // Case 3b: triggerTemplate requested but no targetSessionId on a non-always_new zone
+              promptResult = {
+                note: `Zone "${zone.label}" has a show_picker trigger. Provide a targetSessionId to send the prompt to, or use agor_sessions_create to make a new session first.`,
+              };
+            } else if (hasZoneTrigger && zone.trigger!.behavior === 'show_picker') {
+              // Case 4: show_picker without explicit trigger — return trigger info for agent to decide
+              promptResult = {
+                note: `Zone "${zone.label}" has a show_picker trigger. Use triggerTemplate=true with a targetSessionId to execute, or use agor_sessions_create to make a new session first.`,
+              };
             }
 
             mcpResponse = {
@@ -3067,8 +3099,8 @@ export function setupMCPRoutes(app: Application): void {
           if (args?.sortOrder) query.sortOrder = args.sortOrder;
 
           // Add pagination
-          if (args?.limit) query.$limit = args.limit;
-          if (args?.offset) query.$skip = args.offset;
+          if (args?.limit) query.limit = args.limit;
+          if (args?.offset) query.offset = args.offset;
 
           const leaderboard = await app.service('leaderboard').find({ query });
           mcpResponse = {
