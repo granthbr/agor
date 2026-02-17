@@ -46,6 +46,7 @@ import {
   select,
   sessionMcpServers,
   TaskRepository,
+  UserMCPOAuthTokenRepository,
   UsersRepository,
   WorktreeRepository,
 } from '@agor/core/db';
@@ -82,6 +83,7 @@ import type {
   Board,
   HookContext,
   Id,
+  MCPServer,
   Message,
   MessageSource,
   Paginated,
@@ -97,6 +99,7 @@ import type {
 import { SessionStatus, TaskStatus } from '@agor/core/types';
 import { NotFoundError } from '@agor/core/utils/errors';
 
+import { performOAuthDisconnect } from './services/oauth-disconnect.js';
 // Executor spawning utility for fire-and-forget Unix operations
 import {
   configureDaemonUrl,
@@ -175,6 +178,12 @@ function getOAuth21Token(mcpUrl: string): string | undefined {
   }
   console.log(`[OAuth 2.1 Cache] Found valid token for ${origin}`);
   return cached.token;
+}
+
+function clearOAuth21Token(mcpUrl: string): void {
+  const origin = new URL(mcpUrl).origin;
+  oauth21TokenCache.delete(origin);
+  console.log(`[OAuth 2.1 Cache] Token cleared for ${origin}`);
 }
 
 /**
@@ -1098,16 +1107,19 @@ async function main() {
   // - OAuth 2.1 with auto-discovery (RFC 9728) - browser-based Authorization Code flow with PKCE
   // - OAuth 2.0 Client Credentials flow - machine-to-machine with client_id/secret
   app.use('/mcp-servers/test-oauth', {
-    async create(data: {
-      mcp_url: string;
-      mcp_server_id?: string; // Optional: if provided, token will be saved to DB
-      token_url?: string;
-      client_id?: string;
-      client_secret?: string;
-      scope?: string;
-      grant_type?: string;
-      start_browser_flow?: boolean; // If true, initiate browser-based OAuth flow
-    }) {
+    async create(
+      data: {
+        mcp_url: string;
+        mcp_server_id?: string; // Optional: if provided, token will be saved to DB
+        token_url?: string;
+        client_id?: string;
+        client_secret?: string;
+        scope?: string;
+        grant_type?: string;
+        start_browser_flow?: boolean; // If true, initiate browser-based OAuth flow
+      },
+      params?: { connection?: { id?: string } }
+    ) {
       // Create repo for DB token storage
       const mcpServerRepo = new MCPServerRepository(db);
       try {
@@ -1174,10 +1186,57 @@ async function main() {
 
             try {
               console.log('[OAuth Test] Calling performMCPOAuthFlow...');
+
+              // Debug: Log full params structure to understand socket connection
+              console.log(
+                '[OAuth Test] Full params:',
+                JSON.stringify(
+                  params,
+                  (key, value) => {
+                    // Avoid circular refs and huge objects - just show keys at top level
+                    if (key === 'connection' && value) {
+                      return { id: value.id, hasIo: !!value.io, keys: Object.keys(value) };
+                    }
+                    return value;
+                  },
+                  2
+                )
+              );
+              console.log('[OAuth Test] app.io available:', !!app.io);
+              console.log(
+                '[OAuth Test] params?.provider:',
+                (params as AuthenticatedParams)?.provider
+              );
+
+              // Custom browser opener: emit WebSocket event to client instead of opening locally
+              const browserOpener = async (authUrl: string) => {
+                // For Feathers socketio, connection may have the socket directly
+                const connection = (params as AuthenticatedParams)?.connection as
+                  | { id?: string }
+                  | undefined;
+                const socketId = connection?.id;
+                if (socketId && app.io) {
+                  console.log(
+                    '[OAuth Test] Emitting oauth:open_browser event to socket:',
+                    socketId
+                  );
+                  app.io.to(socketId).emit('oauth:open_browser', { authUrl });
+                } else {
+                  console.log('[OAuth Test] No socket connection, auth URL:', authUrl);
+                  console.log('[OAuth Test] connection object:', connection);
+                  // Fallback: broadcast to ALL connected clients
+                  // The client should only have one browser tab open doing OAuth
+                  if (app.io) {
+                    console.log('[OAuth Test] Broadcasting oauth:open_browser to all clients');
+                    app.io.emit('oauth:open_browser', { authUrl });
+                  }
+                }
+              };
+
               const token = await performMCPOAuthFlow(
                 wwwAuthenticate!,
                 data.client_id, // Optional client_id
-                (url) => console.log('[OAuth Test] Browser should open:', url)
+                browserOpener // Custom opener emits event to client
               );
               console.log('[OAuth Test] OAuth flow completed, token obtained');
 
@@ -1423,6 +1482,273 @@ async function main() {
     },
   });
 
+  // ============================================================================
+  // TWO-PHASE OAUTH FLOW ENDPOINTS
+  // These endpoints support OAuth when the daemon runs remotely and the
+  // callback server can't receive the OAuth redirect.
+  // ============================================================================
+
+  // Store pending OAuth flow contexts (keyed by state)
+  const pendingOAuthFlows = new Map<
+    string,
+    {
+      context: {
+        metadataUrl: string;
+        tokenEndpoint: string;
+        redirectUri: string;
+        pkceVerifier: string;
+        clientId: string;
+        clientSecret?: string;
+        state: string;
+        authorizationUrl: string;
+      };
+      mcpServerId?: string;
+      userId?: string; // User ID for per-user OAuth tokens
+      oauthMode?: 'per_user' | 'shared'; // OAuth mode from MCP server config
+      createdAt: number;
+    }
+  >();
+
+  // Clean up expired flows (older than 10 minutes)
+  setInterval(() => {
+    const now = Date.now();
+    const tenMinutes = 10 * 60 * 1000;
+    for (const [state, flow] of pendingOAuthFlows.entries()) {
+      if (now - flow.createdAt > tenMinutes) {
+        pendingOAuthFlows.delete(state);
+        console.log('[OAuth] Cleaned up expired flow:', state);
+      }
+    }
+  }, 60_000); // Check every minute
+
+  // Start OAuth flow - returns auth URL and stores context for completion
+  app.use('/mcp-servers/oauth-start', {
+    async create(
+      data: {
+        mcp_url: string;
+        mcp_server_id?: string;
+        client_id?: string;
+      },
+      params?: AuthenticatedParams
+    ) {
+      try {
+        console.log('[OAuth Start] Starting two-phase OAuth flow for:', data.mcp_url);
+
+        // Get user ID from authenticated params
+        const userId = params?.user?.user_id;
+        console.log('[OAuth Start] User ID:', userId);
+
+        // Get OAuth mode from MCP server config if server ID is provided
+        let oauthMode: 'per_user' | 'shared' | undefined;
+        if (data.mcp_server_id) {
+          const mcpServerRepo = new MCPServerRepository(db);
+          const server = await mcpServerRepo.findById(data.mcp_server_id);
+          if (server?.auth?.type === 'oauth') {
+            oauthMode = server.auth.oauth_mode || 'per_user';
+            console.log('[OAuth Start] OAuth mode from server config:', oauthMode);
+          }
+        }
+
+        // Probe the MCP URL to get WWW-Authenticate header
+        const probeResponse = await fetch(data.mcp_url, {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(15_000),
+        });
+
+        const wwwAuthenticate = probeResponse.headers.get('www-authenticate');
+        if (probeResponse.status !== 401 || !wwwAuthenticate?.includes('resource_metadata=')) {
+          return {
+            success: false,
+            error: 'Server does not require OAuth 2.1 authentication',
+          };
+        }
+
+        // Import the two-phase OAuth flow functions
+        const { startMCPOAuthFlow } = await import('@agor/core/tools/mcp/oauth-mcp-transport');
+
+        // Start the flow - this returns auth URL and context
+        const context = await startMCPOAuthFlow(wwwAuthenticate, data.client_id);
+
+        // Store the context for later completion (including user ID and OAuth mode)
+        pendingOAuthFlows.set(context.state, {
+          context,
+          mcpServerId: data.mcp_server_id,
+          userId,
+          oauthMode,
+          createdAt: Date.now(),
+        });
+
+        console.log('[OAuth Start] Flow started, state:', context.state, 'oauthMode:', oauthMode);
+
+        // Emit WebSocket event to open browser on client
+        const connection = params?.connection as { id?: string } | undefined;
+        const socketId = connection?.id;
+        if (socketId && app.io) {
+          console.log('[OAuth Start] Emitting oauth:open_browser to socket:', socketId);
+          app.io.to(socketId).emit('oauth:open_browser', { authUrl: context.authorizationUrl });
+        } else if (app.io) {
+          console.log('[OAuth Start] Broadcasting oauth:open_browser to all clients');
+          app.io.emit('oauth:open_browser', { authUrl: context.authorizationUrl });
+        }
+
+        return {
+          success: true,
+          authorizationUrl: context.authorizationUrl,
+          state: context.state,
+          message:
+            'Browser opened for authentication. After signing in, copy the callback URL and paste it below.',
+        };
+      } catch (error) {
+        console.error('[OAuth Start] Error:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  });
+
+  app.service('mcp-servers/oauth-start').hooks({
+    before: { create: [requireAuth] },
+  });
+
+  // Complete OAuth flow with authorization code
+  app.use('/mcp-servers/oauth-complete', {
+    async create(data: { callback_url: string } | { code: string; state: string }) {
+      try {
+        // Import the completion function
+        const { completeMCPOAuthFlow, parseOAuthCallback } = await import(
+          '@agor/core/tools/mcp/oauth-mcp-transport'
+        );
+
+        let code: string;
+        let state: string;
+
+        // Parse the callback URL or use provided code/state
+        if ('callback_url' in data) {
+          console.log('[OAuth Complete] Parsing callback URL:', data.callback_url);
+          const parsed = parseOAuthCallback(data.callback_url);
+          code = parsed.code;
+          state = parsed.state;
+        } else {
+          code = data.code;
+          state = data.state;
+        }
+
+        console.log('[OAuth Complete] State:', state);
+
+        // Find the pending flow
+        const pendingFlow = pendingOAuthFlows.get(state);
+        if (!pendingFlow) {
+          return {
+            success: false,
+            error: 'OAuth flow expired or not found. Please start the flow again.',
+          };
+        }
+
+        // Complete the flow
+        const token = await completeMCPOAuthFlow(pendingFlow.context, code, state);
+
+        // Remove from pending flows
+        pendingOAuthFlows.delete(state);
+
+        // Cache the token at daemon level
+        cacheOAuth21Token(pendingFlow.context.metadataUrl, token, 3600);
+
+        // Save to database based on OAuth mode
+        if (pendingFlow.mcpServerId) {
+          const oauthMode = pendingFlow.oauthMode || 'per_user';
+
+          if (oauthMode === 'per_user' && pendingFlow.userId) {
+            // Per-user mode: save to user_mcp_oauth_tokens table
+            const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+            await userTokenRepo.saveToken(
+              pendingFlow.userId as import('@agor/core/types').UserID,
+              pendingFlow.mcpServerId as import('@agor/core/types').MCPServerID,
+              token,
+              3600 // 1 hour expiry
+            );
+            console.log(
+              `[OAuth Complete] Per-user token saved for user ${pendingFlow.userId}, server ${pendingFlow.mcpServerId}`
+            );
+          } else {
+            // Shared mode: save to MCP server's auth config
+            const mcpServerRepo = new MCPServerRepository(db);
+            await saveOAuth21TokenToDB(mcpServerRepo, pendingFlow.mcpServerId, token, 3600);
+            console.log(
+              `[OAuth Complete] Shared token saved for server ${pendingFlow.mcpServerId}`
+            );
+          }
+        }
+
+        console.log('[OAuth Complete] Flow completed successfully');
+
+        return {
+          success: true,
+          message: 'OAuth authentication successful!',
+          tokenObtained: true,
+        };
+      } catch (error) {
+        console.error('[OAuth Complete] Error:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  });
+
+  app.service('mcp-servers/oauth-complete').hooks({
+    before: { create: [requireAuth] },
+  });
+
+  // Notify UI that OAuth authentication is needed for MCP servers
+  // Called by executor when MCP servers require authentication
+  app.use('/mcp-servers/oauth-notify', {
+    async create(data: {
+      session_id: string;
+      servers: Array<{ name: string; serverId: string; url: string }>;
+    }) {
+      console.log(
+        `[OAuth Notify] Broadcasting oauth_auth_required for session ${data.session_id}, ` +
+          `servers: ${data.servers.map((s) => s.name).join(', ')}`
+      );
+
+      // Broadcast to all authenticated clients
+      app.io.emit('oauth:auth_required', {
+        session_id: data.session_id,
+        servers: data.servers,
+      });
+
+      return { success: true };
+    },
+  });
+
+  app.service('mcp-servers/oauth-notify').hooks({
+    before: { create: [requireAuth] },
+  });
+
+  // Disconnect OAuth - delete per-user OAuth token and clear all caches for an MCP server
+  app.use('/mcp-servers/oauth-disconnect', {
+    async create(data: { mcp_server_id: string }, params?: AuthenticatedParams) {
+      const { clearAuthCodeTokenCache } = await import('@agor/core/tools/mcp/oauth-mcp-transport');
+
+      return performOAuthDisconnect({
+        userId: params?.user?.user_id,
+        mcpServerId: data.mcp_server_id,
+        userTokenRepo: new UserMCPOAuthTokenRepository(db),
+        mcpServerRepo: new MCPServerRepository(db),
+        oauthTokenCache: oauth21TokenCache,
+        clearCoreTokenCache: clearAuthCodeTokenCache,
+      });
+    },
+  });
+
+  app.service('mcp-servers/oauth-disconnect').hooks({
+    before: { create: [requireAuth] },
+  });
+
   // Discover/Test MCP server capabilities endpoint
   // Accepts either:
   // - mcp_server_id: Test saved server config and persist discovered capabilities
@@ -1604,6 +1930,58 @@ async function main() {
         // Get auth headers (pass MCP URL for OAuth 2.1 token lookup)
         let authHeaders = await resolveMCPAuthHeaders(serverConfig.auth, serverConfig.url);
 
+        // Helper: Open OAuth browser via WebSocket event to client
+        const openOAuthBrowser = async (authUrl: string) => {
+          const connection = params?.connection as { id?: string } | undefined;
+          const socketId = connection?.id;
+          if (socketId && app.io) {
+            console.log('[MCP Discovery] Emitting oauth:open_browser event to socket:', socketId);
+            app.io.to(socketId).emit('oauth:open_browser', { authUrl });
+          } else {
+            console.log('[MCP Discovery] No socket connection, auth URL:', authUrl);
+            console.log('[MCP Discovery] connection object:', connection);
+            if (app.io) {
+              console.log('[MCP Discovery] Broadcasting oauth:open_browser to all clients');
+              app.io.emit('oauth:open_browser', { authUrl });
+            }
+          }
+        };
+
+        // Helper: Probe URL for OAuth 2.1 and acquire token via browser flow
+        const probeAndAcquireOAuthToken = async (mcpUrl: string): Promise<string | undefined> => {
+          try {
+            console.log('[MCP Discovery] Probing for OAuth 2.1...');
+            const probeResponse = await fetch(mcpUrl, {
+              method: 'GET',
+              headers: { Accept: 'application/json' },
+            });
+
+            const wwwAuthenticate = probeResponse.headers.get('www-authenticate');
+
+            if (probeResponse.status === 401 && wwwAuthenticate?.includes('resource_metadata=')) {
+              console.log('[MCP Discovery] OAuth 2.1 detected, starting browser flow...');
+
+              const { performMCPOAuthFlow } = await import(
+                '@agor/core/tools/mcp/oauth-mcp-transport'
+              );
+
+              const token = await performMCPOAuthFlow(wwwAuthenticate, undefined, openOAuthBrowser);
+
+              cacheOAuth21Token(mcpUrl, token, 3600);
+              if (serverId) {
+                await saveOAuth21TokenToDB(mcpServerRepo, serverId, token, 3600);
+              }
+
+              return token;
+            }
+
+            return undefined;
+          } catch (error) {
+            console.error('[MCP Discovery] OAuth token acquisition failed:', error);
+            return undefined;
+          }
+        };
+
         // If no auth headers and auth type is oauth, try to get/obtain OAuth 2.1 token
         if (!authHeaders && serverConfig.auth?.type === 'oauth' && serverConfig.url) {
           // First check daemon-level cache
@@ -1631,42 +2009,10 @@ async function main() {
           }
 
           if (!cachedToken) {
-            // No cached token - probe the URL to see if it needs OAuth 2.1
-            console.log('[MCP Discovery] No cached token, probing for OAuth 2.1...');
-            try {
-              const probeResponse = await fetch(serverConfig.url, {
-                method: 'GET',
-                headers: { Accept: 'application/json' },
-              });
-
-              const wwwAuthenticate = probeResponse.headers.get('www-authenticate');
-
-              if (probeResponse.status === 401 && wwwAuthenticate?.includes('resource_metadata=')) {
-                console.log('[MCP Discovery] OAuth 2.1 detected, starting browser flow...');
-
-                // Import and run the OAuth 2.1 flow
-                const { performMCPOAuthFlow } = await import(
-                  '@agor/core/tools/mcp/oauth-mcp-transport'
-                );
-
-                const token = await performMCPOAuthFlow(
-                  wwwAuthenticate,
-                  undefined, // Let it use DCR
-                  (url) => console.log('[MCP Discovery] Browser opening:', url)
-                );
-
-                // Cache the token in memory
-                cacheOAuth21Token(serverConfig.url, token, 3600);
-
-                // Save to database if we have a server ID
-                if (serverId) {
-                  await saveOAuth21TokenToDB(mcpServerRepo, serverId, token, 3600);
-                }
-
-                cachedToken = token;
-              }
-            } catch (oauthError) {
-              console.error('[MCP Discovery] OAuth 2.1 flow failed:', oauthError);
+            console.log('[MCP Discovery] No cached token, attempting OAuth 2.1 flow...');
+            const freshToken = await probeAndAcquireOAuthToken(serverConfig.url);
+            if (freshToken) {
+              cachedToken = freshToken;
             }
           }
 
@@ -1689,71 +2035,68 @@ async function main() {
           Object.assign(headers, authHeaders);
         }
 
-        // Workaround for MCP SDK session ID bug:
-        // The SDK captures session ID from response but doesn't include it in subsequent requests.
-        // We manually track and inject the session ID.
-        let capturedSessionId: string | undefined;
+        // Helper: Create MCP transport and client with session ID tracking
+        // (Workaround for MCP SDK session ID bug: SDK captures session ID from
+        // response but doesn't include it in subsequent requests)
+        const createMCPConnection = (connHeaders: Record<string, string>) => {
+          let sessionId: string | undefined;
 
-        const sessionAwareFetch: typeof fetch = async (input, init) => {
-          // Inject session ID into request if we have one
-          if (capturedSessionId && init?.headers) {
-            const headersObj =
-              init.headers instanceof Headers
-                ? Object.fromEntries(init.headers.entries())
-                : (init.headers as Record<string, string>);
+          const connSessionAwareFetch: typeof fetch = async (input, init) => {
+            if (sessionId && init?.headers) {
+              const headersObj =
+                init.headers instanceof Headers
+                  ? Object.fromEntries(init.headers.entries())
+                  : (init.headers as Record<string, string>);
 
-            // Only add if not already present
-            if (!headersObj['mcp-session-id']) {
-              console.log('[MCP Discovery] Injecting session ID into request:', capturedSessionId);
-              init = {
-                ...init,
-                headers: {
-                  ...headersObj,
-                  'mcp-session-id': capturedSessionId,
-                },
-              };
+              if (!headersObj['mcp-session-id']) {
+                console.log('[MCP Discovery] Injecting session ID into request:', sessionId);
+                init = {
+                  ...init,
+                  headers: {
+                    ...headersObj,
+                    'mcp-session-id': sessionId,
+                  },
+                };
+              }
             }
-          }
 
-          const response = await fetch(input, init);
+            const response = await fetch(input, init);
 
-          // Capture session ID from response
-          const sessionId = response.headers.get('mcp-session-id');
-          if (sessionId) {
-            capturedSessionId = sessionId;
-            console.log('[MCP Discovery] Captured session ID:', sessionId);
-          }
+            const respSessionId = response.headers.get('mcp-session-id');
+            if (respSessionId) {
+              sessionId = respSessionId;
+              console.log('[MCP Discovery] Captured session ID:', respSessionId);
+            }
 
-          console.log(
-            '[MCP Discovery] Response:',
-            response.status,
-            response.statusText,
-            'session-id:',
-            sessionId || '<none>'
+            console.log(
+              '[MCP Discovery] Response:',
+              response.status,
+              response.statusText,
+              'session-id:',
+              respSessionId || '<none>'
+            );
+
+            return response;
+          };
+
+          const transport = new StreamableHTTPClientTransport(new URL(serverConfig.url!), {
+            fetch: connSessionAwareFetch,
+            requestInit: { headers: connHeaders },
+          });
+
+          const mcpClient = new Client(
+            { name: 'agor-discovery', version: '1.0.0' },
+            { capabilities: {} }
           );
 
-          return response;
+          return { transport, client: mcpClient };
         };
 
-        // Create Streamable HTTP transport (supports both SSE and regular HTTP)
-        const httpTransport = new StreamableHTTPClientTransport(new URL(serverConfig.url), {
-          fetch: sessionAwareFetch,
-          requestInit: {
-            headers,
-          },
-        });
+        // Track whether we used a cached OAuth token (for retry logic)
+        const hadCachedOAuthToken = !!(authHeaders && serverConfig.auth?.type === 'oauth');
 
-        // Create MCP client
-        const client = new Client(
-          {
-            name: 'agor-discovery',
-            version: '1.0.0',
-          },
-          {
-            capabilities: {},
-          }
-        );
-
+        // Create initial MCP connection
+        let { transport: httpTransport, client } = createMCPConnection(headers);
         let connected = false;
 
         try {
@@ -1761,26 +2104,66 @@ async function main() {
           console.log('[MCP Discovery] URL:', serverConfig.url);
           console.log('[MCP Discovery] Headers:', JSON.stringify(headers, null, 2));
 
-          // Add timeout to prevent hanging indefinitely (10s should be plenty)
-          const connectTimeout = new Promise<never>((_, reject) => {
-            setTimeout(() => {
-              console.error(
-                '[MCP Discovery] ❌ Connection timeout - server did not respond in 10 seconds'
-              );
-              console.error(
-                '[MCP Discovery] This likely means the MCP SDK cannot establish a connection'
-              );
-              reject(new Error('Connection timeout after 10 seconds'));
-            }, 10000);
-          });
+          // Helper: connect with 10s timeout
+          const connectWithTimeout = async (
+            mcpClient: InstanceType<typeof Client>,
+            mcpTransport: InstanceType<typeof StreamableHTTPClientTransport>
+          ) => {
+            const timeout = new Promise<never>((_, reject) => {
+              setTimeout(() => {
+                console.error(
+                  '[MCP Discovery] ❌ Connection timeout - server did not respond in 10 seconds'
+                );
+                reject(new Error('Connection timeout after 10 seconds'));
+              }, 10000);
+            });
+            const conn = mcpClient.connect(mcpTransport).catch((err: unknown) => {
+              console.error('[MCP Discovery] ❌ Connection error during connect():', err);
+              throw err;
+            });
+            await Promise.race([conn, timeout]);
+          };
 
           console.log('[MCP Discovery] Calling client.connect()...');
-          const connectPromise = client.connect(httpTransport).catch((err) => {
-            console.error('[MCP Discovery] ❌ Connection error during connect():', err);
-            throw err;
-          });
+          try {
+            await connectWithTimeout(client, httpTransport);
+          } catch (connectError) {
+            // If we used a cached OAuth token, clear it and try re-acquiring via browser flow
+            if (hadCachedOAuthToken && serverConfig.url && serverConfig.auth?.type === 'oauth') {
+              console.log(
+                '[MCP Discovery] Connection failed with cached OAuth token, attempting re-auth...'
+              );
 
-          await Promise.race([connectPromise, connectTimeout]);
+              // Clear the stale cached token
+              clearOAuth21Token(serverConfig.url);
+
+              // Acquire a fresh token via OAuth browser flow
+              const freshToken = await probeAndAcquireOAuthToken(serverConfig.url);
+
+              if (freshToken) {
+                console.log('[MCP Discovery] Got fresh OAuth token, retrying connection...');
+
+                // Build fresh headers with new token
+                const freshHeaders: Record<string, string> = {
+                  Accept: 'application/json, text/event-stream',
+                  Authorization: `Bearer ${freshToken}`,
+                };
+
+                // Create new transport and client for retry
+                const retry = createMCPConnection(freshHeaders);
+                httpTransport = retry.transport;
+                client = retry.client;
+
+                // Retry connection with fresh token
+                await connectWithTimeout(client, httpTransport);
+              } else {
+                throw connectError;
+              }
+            } else {
+              throw connectError;
+            }
+          }
+
           connected = true;
           console.log('[MCP Discovery] ✅ Successfully connected!');
 
@@ -2401,6 +2784,93 @@ async function main() {
     },
   });
 
+  // Hook to inject per-user OAuth tokens into MCP server responses
+  const injectPerUserOAuthTokens = async (context: HookContext) => {
+    // Try multiple sources for user ID:
+    // 1. params.user (from socket authentication)
+    // 2. query.forUserId (explicitly passed from executor for per-user OAuth)
+    const queryForUserId = (context.params?.query as Record<string, unknown>)?.forUserId as
+      | string
+      | undefined;
+    const userId = context.params?.user?.user_id || queryForUserId;
+    const source = context.params?.user?.user_id
+      ? 'socket-auth'
+      : queryForUserId
+        ? 'query-param'
+        : 'none';
+    console.log(
+      `[MCP OAuth] injectPerUserOAuthTokens called - userId: ${userId || 'NONE'}, ` +
+        `source: ${source}, provider: ${context.params?.provider || 'internal'}, ` +
+        `method: ${context.method}, resultCount: ${Array.isArray(context.result) ? context.result.length : 1}`
+    );
+    if (!userId) {
+      console.log('[MCP OAuth] No user ID - skipping token injection');
+      return context;
+    }
+
+    const injectToken = async (server: MCPServer) => {
+      // Only process OAuth servers with per_user mode
+      if (server.auth?.type !== 'oauth' || server.auth?.oauth_mode !== 'per_user') {
+        console.log(
+          `[MCP OAuth] Server ${server.name}: authType=${server.auth?.type}, ` +
+            `oauthMode=${server.auth?.oauth_mode} - skipping (not per_user OAuth)`
+        );
+        return server;
+      }
+
+      console.log(
+        `[MCP OAuth] Server ${server.name}: per_user OAuth mode - checking for user token...`
+      );
+
+      try {
+        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+        const token = await userTokenRepo.getValidToken(
+          userId as import('@agor/core/types').UserID,
+          server.mcp_server_id
+        );
+
+        if (token) {
+          console.log(
+            `[MCP OAuth] ✅ Found valid token for user ${userId.substring(0, 8)}, ` +
+              `server ${server.name} - injecting into auth config`
+          );
+          // Inject per-user token into the server's auth config
+          return {
+            ...server,
+            auth: {
+              ...server.auth,
+              oauth_access_token: token,
+              // Don't include expiry - the token is already validated
+            },
+          };
+        } else {
+          console.log(
+            `[MCP OAuth] ❌ No valid token for user ${userId.substring(0, 8)}, ` +
+              `server ${server.name} - user needs to authenticate`
+          );
+        }
+      } catch (error) {
+        console.warn(
+          `[MCP OAuth] Failed to get per-user token for ${server.name}:`,
+          error instanceof Error ? error.message : error
+        );
+      }
+
+      return server;
+    };
+
+    // Handle both single result and array/paginated results
+    if (Array.isArray(context.result)) {
+      context.result = await Promise.all(context.result.map(injectToken));
+    } else if (context.result?.data && Array.isArray(context.result.data)) {
+      context.result.data = await Promise.all(context.result.data.map(injectToken));
+    } else if (context.result?.mcp_server_id) {
+      context.result = await injectToken(context.result);
+    }
+
+    return context;
+  };
+
   app.service('mcp-servers').hooks({
     before: {
       all: [
@@ -2412,12 +2882,19 @@ async function main() {
       patch: [requireMinimumRole('admin', 'update MCP servers')],
       remove: [requireMinimumRole('admin', 'delete MCP servers')],
     },
+    after: {
+      find: [injectPerUserOAuthTokens],
+      get: [injectPerUserOAuthTokens],
+    },
   });
 
   app.service('session-mcp-servers').hooks({
     before: {
       all: [requireAuth],
       find: [requireMinimumRole('member', 'list session MCP servers')],
+    },
+    after: {
+      find: [injectPerUserOAuthTokens],
     },
   });
 
@@ -5523,7 +6000,7 @@ async function main() {
   // Setup MCP routes (if enabled)
   if (config.daemon?.mcpEnabled !== false) {
     const { setupMCPRoutes } = await import('./mcp/routes.js');
-    setupMCPRoutes(app);
+    setupMCPRoutes(app, db);
     console.log('✅ MCP server enabled at POST /mcp');
   } else {
     console.log('🔒 MCP server disabled via config (daemon.mcpEnabled=false)');

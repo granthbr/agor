@@ -21,14 +21,14 @@ All three use official SDKs for programmatic control, streaming, and session man
 | Feature                           | Claude Code          | Codex               | Gemini             |
 | --------------------------------- | -------------------- | ------------------- | ------------------ |
 | **SDK Available**                 | ✅ Official          | ✅ Official         | ✅ Official        |
-| **Streaming Support**             | ✅ Token-level       | ✅ Event-based      | ✅ Token-level     |
+| **Streaming Support**             | ✅ Text + tools      | ⚠️ Tools only       | ✅ Text + tools    |
 | **Usage/Token Tracking**          | ✅ Full support      | ⚠️ Not exposed      | ⚠️ Not tested      |
 | **Permission Modes**              | ✅ 4 modes           | ✅ 4 modes (hybrid) | ✅ 3 modes         |
 | **Mid-Session Permission Change** | ✅ Via hooks         | ✅ Via /approvals   | ⚠️ Needs testing   |
 | **Session Continuity**            | ✅ sdk_session_id    | ✅ Thread ID        | ✅ History array   |
 | **Model Selection**               | ✅ Via SDK           | ✅ Via SDK          | ✅ Via SDK         |
-| **MCP Support**                   | ✅ Via SDK           | ⚠️ STDIO only       | ✅ Via SDK         |
-| **Agor MCP Integration**          | ✅ Self-hosted       | ⚠️ Limited (STDIO)  | ✅ Fully wired     |
+| **MCP Support**                   | ✅ Via SDK           | ✅ Via config.toml   | ✅ Via SDK         |
+| **Agor MCP Integration**          | ✅ Self-hosted       | ✅ Fully wired       | ✅ Fully wired     |
 | **Session Import**                | ✅ JSONL transcripts | ❌ Format unknown   | ❌ Not implemented |
 | **Tool Event Details**            | ✅ Rich metadata     | ✅ Rich metadata    | ✅ 13 event types  |
 | **Interactive Permissions**       | ✅ PreToolUse hook   | ❌ Config-only      | ⚠️ Unknown         |
@@ -37,25 +37,32 @@ All three use official SDKs for programmatic control, streaming, and session man
 
 #### 1. Streaming Support
 
-**Claude Code:** Token-level streaming via `promptSessionStreaming()` with `includePartialMessages: true`
+**Claude Code:** ✅ Token-level text streaming + tool event streaming
 
-- Event types: `stream_event` with `content_block_delta`
-- Granularity: Individual tokens
-- Pattern: AsyncGenerator
+- Text streaming: `stream_event` → `content_block_delta` → individual tokens
+- Tool streaming: `tool_use` start/complete events
+- Pattern: AsyncGenerator via `promptSessionStreaming()` with `includePartialMessages: true`
+- UX: Full typewriter effect for text responses
 
-**Codex:** Event-based streaming via `runStreamed()`
+**Codex:** ⚠️ Tool event streaming only (NO text streaming)
 
-- Event types: `item.updated`, `item.started`, `item.completed`, `turn.completed`
-- Granularity: Progressive text deltas
-- Pattern: AsyncGenerator
+- Tool streaming: `item.started`, `item.completed`, `turn.completed` events
+- Text arrives **all at once** in `item.completed` for `agent_message` items
+- `item.updated` only fires for `todo_list` items, NOT for text content
+- No `content_delta` or `text_delta` equivalent — this is an **upstream SDK limitation**
+- However: Multiple `agent_message` items CAN be emitted per turn (interleaved with tools)
+- Pattern: AsyncGenerator via `runStreamed()`
+- UX: Text appears instantly when model finishes generating (no typewriter)
 
-**Gemini:** Token-level streaming via `sendMessageStream()`
+**Gemini:** ✅ Token-level text streaming + tool event streaming
 
-- Event types: 13 types (content, tool_call_request, thought, error, etc.)
-- Granularity: Text chunks + rich events
-- Pattern: AsyncGenerator
+- Text streaming: `GeminiEventType.Content` → individual text chunks
+- Tool streaming: `tool_call_request`, `tool_call_response` events
+- 13 distinct event types for rich progress feedback
+- Pattern: AsyncGenerator via `sendMessageStream()`
+- UX: Full typewriter effect for text responses
 
-**Agor Integration:** All three support `type: 'partial'` events with `textChunk` for typewriter effect.
+**Agor Integration:** Claude and Gemini support `type: 'partial'` events with `textChunk` for typewriter effect. Codex emits `tool_complete` events in real-time but text only via `complete` events.
 
 ---
 
@@ -288,14 +295,15 @@ function mapPermissionMode(mode: PermissionMode, agent: AgenticToolName): string
 - Agor integration: Session-level MCP server selection via UI
 - Status: ✅ Fully wired and working
 
-**Codex:** ⚠️ Partial support - **STDIO transport only**
+**Codex:** ✅ Full support via config.toml - **STDIO + Streamable HTTP**
 
 - API: `~/.codex/config.toml` with `[mcp_servers.<name>]` sections
 - Agor integration: Session-level MCP server selection via UI
-- Configuration: Agor writes STDIO MCP servers to config.toml automatically
-- **Limitation**: HTTP and SSE transports are NOT supported by Codex SDK
-- Behavior: HTTP/SSE servers are filtered out with warnings, only STDIO servers configured
-- Status: ⚠️ Working for STDIO servers only (Context7, filesystem, etc. won't work as they use HTTP)
+- Configuration: Agor writes both STDIO and HTTP MCP servers to config.toml automatically
+- Features: Includes Agor MCP server for daemon self-access (streamable HTTP) + user-configured MCP servers
+- STDIO servers: `command` + `args` + `env` fields
+- HTTP servers: `url` + optional `bearer_token_env_var` / `http_headers` / `env_http_headers`
+- Status: ✅ Fully wired and working (STDIO + HTTP transports)
 
 **Gemini:** ✅ Full support via SDK
 
@@ -467,7 +475,7 @@ interface Session {
 | **Mid-Session Mode Change** | ✅ Complete | ✅ Complete      | ⚠️ Needs testing   |
 | **Session Resumption**      | ✅ Complete | ✅ Complete      | ✅ Complete        |
 | **Model Selection UI**      | ✅ Complete | ✅ Complete      | ✅ Complete        |
-| **MCP Integration**         | ✅ Complete | ⚠️ STDIO only    | ✅ Complete        |
+| **MCP Integration**         | ✅ Complete | ✅ Complete       | ✅ Complete        |
 | **Session Import**          | ✅ Complete | ❌ Deferred      | ❌ Not implemented |
 | **Tool Visualization**      | ✅ Complete | ⚠️ Basic         | ❌ Not implemented |
 | **Interactive Approvals**   | ✅ Complete | ❌ Not supported | ⚠️ Unknown         |
@@ -532,7 +540,7 @@ interface Session {
 
 1. **Tool visualization** - Enhance tool blocks to Claude Code level
 2. **Session import** - Discover and parse Codex session format
-3. **HTTP/SSE MCP support** - Investigate if Codex SDK can support non-STDIO transports (likely SDK limitation)
+3. ~~**HTTP/SSE MCP support**~~ - ✅ Done! Codex now supports streamable HTTP transport natively via `url` field in config.toml
 
 ### Cross-Tool Features
 
