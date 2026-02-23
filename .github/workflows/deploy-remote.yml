@@ -1,0 +1,115 @@
+name: Deploy to Remote Host
+
+# Triggers:
+# 1. After CI passes on allowed branches (workflow_run evaluates from default branch only)
+# 2. Manual dispatch for emergency deploys
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main, feat/prompt-architect]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to deploy
+        required: true
+        default: feat/prompt-architect
+        type: choice
+        options:
+          - main
+          - feat/prompt-architect
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: self-hosted
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success')
+    environment: agor-remote
+
+    steps:
+      - name: Determine branch
+        id: branch
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            BRANCH="${{ github.event.inputs.branch }}"
+          else
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+          fi
+
+          # Allowlist check
+          case "$BRANCH" in
+            main|feat/prompt-architect) ;;
+            *)
+              echo "::error::Branch '$BRANCH' is not in the deploy allowlist"
+              exit 1
+              ;;
+          esac
+
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "### Deploying \`$BRANCH\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Pre-deploy health check
+        id: pre_health
+        working-directory: /home/agent/agor
+        run: |
+          echo "Current commit: $(git rev-parse --short HEAD)"
+          echo "Current branch: $(git branch --show-current)"
+          systemctl --user is-active agor-daemon && echo "Daemon: running" || echo "Daemon: stopped"
+          echo "pre_commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Pull latest code
+        working-directory: /home/agent/agor
+        run: |
+          BRANCH="${{ steps.branch.outputs.branch }}"
+          git fetch origin "$BRANCH"
+          git checkout "$BRANCH"
+          git pull origin "$BRANCH" --ff-only
+
+      - name: Install dependencies
+        working-directory: /home/agent/agor
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: /home/agent/agor
+        run: pnpm build
+
+      - name: Restart services
+        run: |
+          systemctl --user restart agor-core-watch
+          # agor-daemon and agor-ui restart automatically via dependency chain
+          echo "Waiting for services to start..."
+          sleep 5
+
+      - name: Smoke test
+        working-directory: /home/agent/agor
+        run: ./scripts/smoke-test.sh http://localhost:3030/health 120 5
+
+      - name: Deploy summary
+        if: always()
+        working-directory: /home/agent/agor
+        run: |
+          NEW_COMMIT=$(git rev-parse --short HEAD)
+          {
+            echo "### Deploy Result"
+            echo ""
+            echo "| Detail | Value |"
+            echo "|--------|-------|"
+            echo "| Branch | \`${{ steps.branch.outputs.branch }}\` |"
+            echo "| Previous commit | \`${{ steps.pre_health.outputs.pre_commit }}\` |"
+            echo "| Current commit | \`$NEW_COMMIT\` |"
+            echo "| Status | \`${{ job.status }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "=== agor-daemon logs ==="
+          journalctl --user -u agor-daemon --no-pager -n 50 || true
+          echo ""
+          echo "=== agor-ui logs ==="
+          journalctl --user -u agor-ui --no-pager -n 50 || true
+          echo ""
+          echo "=== agor-core-watch logs ==="
+          journalctl --user -u agor-core-watch --no-pager -n 50 || true
