@@ -63,9 +63,9 @@ jobs:
         working-directory: /home/agent/agor
         run: |
           BRANCH="${{ steps.branch.outputs.branch }}"
-          git fetch origin "$BRANCH"
+          git fetch fork "$BRANCH"
           git checkout "$BRANCH"
-          git pull origin "$BRANCH" --ff-only
+          git pull fork "$BRANCH" --ff-only
 
       - name: Install dependencies
         working-directory: /home/agent/agor
