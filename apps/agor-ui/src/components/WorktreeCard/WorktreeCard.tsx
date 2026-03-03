@@ -16,7 +16,19 @@ import {
   SubnodeOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
-import { Badge, Button, Card, Collapse, Space, Spin, Tooltip, Tree, Typography, theme } from 'antd';
+import {
+  Badge,
+  Button,
+  Card,
+  Collapse,
+  ConfigProvider,
+  Space,
+  Spin,
+  Tooltip,
+  Tree,
+  Typography,
+  theme,
+} from 'antd';
 import { AggregationColor } from 'antd/es/color-picker/color';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useConnectionDisabled } from '../../contexts/ConnectionContext';
@@ -317,7 +329,7 @@ const WorktreeCardComponent = ({
             : `1px solid rgba(255, 255, 255, 0.1)`,
           borderRadius: 4,
           padding: 8,
-          background: session.ready_for_prompt ? `${token.colorPrimary}15` : 'rgba(0, 0, 0, 0.2)',
+          background: 'transparent',
           display: 'flex',
           alignItems: 'center',
           cursor: 'pointer',
@@ -365,18 +377,17 @@ const WorktreeCardComponent = ({
 
   // Session list content (collapsible) - only used when sessions exist
   const sessionListContent = (
-    <Tree
-      treeData={sessionTreeData}
-      expandedKeys={expandedKeys}
-      onExpand={(keys) => setExpandedKeys(keys as React.Key[])}
-      showLine
-      showIcon={false}
-      selectable={false}
-      titleRender={renderSessionNode}
-      style={{
-        background: 'transparent',
-      }}
-    />
+    <ConfigProvider theme={{ components: { Tree: { colorBgContainer: 'transparent' } } }}>
+      <Tree
+        treeData={sessionTreeData}
+        expandedKeys={expandedKeys}
+        onExpand={(keys) => setExpandedKeys(keys as React.Key[])}
+        showLine
+        showIcon={false}
+        selectable={false}
+        titleRender={renderSessionNode}
+      />
+    </ConfigProvider>
   );
 
   // Session list collapse header
@@ -450,7 +461,7 @@ const WorktreeCardComponent = ({
             border: `1px solid rgba(255, 255, 255, 0.1)`,
             borderRadius: 4,
             padding: 8,
-            background: 'rgba(0, 0, 0, 0.2)',
+            background: 'transparent',
             display: 'flex',
             alignItems: 'center',
             cursor: 'pointer',
@@ -525,7 +536,7 @@ const WorktreeCardComponent = ({
               border: `1px solid rgba(255, 255, 255, 0.1)`,
               borderRadius: 4,
               padding: 8,
-              background: 'rgba(0, 0, 0, 0.2)',
+              background: 'transparent',
               display: 'flex',
               alignItems: 'center',
               cursor: 'pointer',
@@ -638,6 +649,7 @@ const WorktreeCardComponent = ({
             : isAgent
               ? { borderColor: token.colorInfo, borderWidth: 1 }
               : {}),
+        ...(isAgent ? { backgroundColor: token.colorInfoBg } : {}),
       }}
       styles={{
         body: { padding: 16 },
@@ -882,6 +894,7 @@ const WorktreeCardComponent = ({
                     key: 'sessions',
                     label: sessionListHeader,
                     children: sessionListContent,
+                    styles: { body: { background: 'transparent' } },
                   },
                 ]}
                 ghost
@@ -898,6 +911,7 @@ const WorktreeCardComponent = ({
                     key: 'scheduled-runs',
                     label: scheduledRunsHeader,
                     children: scheduledRunsContent,
+                    styles: { body: { background: 'transparent' } },
                   },
                 ]}
                 ghost
@@ -914,6 +928,7 @@ const WorktreeCardComponent = ({
                     key: 'gateway-sessions',
                     label: gatewaySessionsHeader,
                     children: gatewaySessionsContent,
+                    styles: { body: { background: 'transparent' } },
                   },
                 ]}
                 ghost
