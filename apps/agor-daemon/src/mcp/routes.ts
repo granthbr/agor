@@ -1259,23 +1259,44 @@ export function setupMCPRoutes(app: Application, db: Database): void {
               }
             );
 
-            mcpResponse = {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify(
-                    {
-                      success: true,
-                      taskId: promptResponse.taskId,
-                      status: promptResponse.status,
-                      note: 'Prompt added to existing session and execution started.',
-                    },
-                    null,
-                    2
-                  ),
-                },
-              ],
-            };
+            // Handle queued vs immediate execution response
+            if (promptResponse.queued) {
+              mcpResponse = {
+                content: [
+                  {
+                    type: 'text',
+                    text: JSON.stringify(
+                      {
+                        success: true,
+                        queued: true,
+                        queue_position: promptResponse.queue_position,
+                        note: 'Session is busy. Prompt has been queued and will execute automatically when the session becomes idle.',
+                      },
+                      null,
+                      2
+                    ),
+                  },
+                ],
+              };
+            } else {
+              mcpResponse = {
+                content: [
+                  {
+                    type: 'text',
+                    text: JSON.stringify(
+                      {
+                        success: true,
+                        taskId: promptResponse.taskId,
+                        status: promptResponse.status,
+                        note: 'Prompt added to existing session and execution started.',
+                      },
+                      null,
+                      2
+                    ),
+                  },
+                ],
+              };
+            }
           } else if (mode === 'fork') {
             // Mode: fork - create sibling session
             console.log(`🔀 MCP forking session ${args.sessionId.substring(0, 8)}`);
@@ -2258,7 +2279,15 @@ export function setupMCPRoutes(app: Application, db: Database): void {
             // 3. triggerTemplate=true but missing targetSessionId or template → return error note
             // 4. Zone has show_picker trigger → return trigger info (agent picks action)
             // 5. No trigger → just pin
-            let promptResult: { taskId?: string; sessionId?: string; note: string } | undefined;
+            let promptResult:
+              | {
+                  taskId?: string;
+                  sessionId?: string;
+                  queued?: boolean;
+                  queue_position?: number;
+                  note: string;
+                }
+              | undefined;
 
             const hasZoneTrigger =
               zone.trigger?.template && zone.trigger.template.trim().length > 0;
@@ -2304,14 +2333,26 @@ export function setupMCPRoutes(app: Application, db: Database): void {
                   }
                 );
 
-                promptResult = {
-                  taskId: promptResponse.taskId,
-                  sessionId: targetSessionId,
-                  note: 'Zone trigger prompt sent to target session',
-                };
-                console.log(
-                  `✅ Zone trigger executed: task ${promptResponse.taskId.substring(0, 8)}`
-                );
+                if (promptResponse.queued) {
+                  promptResult = {
+                    queued: true,
+                    queue_position: promptResponse.queue_position,
+                    sessionId: targetSessionId,
+                    note: 'Session is busy. Zone trigger prompt has been queued.',
+                  };
+                  console.log(
+                    `📬 Zone trigger queued for session ${targetSessionId.substring(0, 8)} at position ${promptResponse.queue_position}`
+                  );
+                } else {
+                  promptResult = {
+                    taskId: promptResponse.taskId,
+                    sessionId: targetSessionId,
+                    note: 'Zone trigger prompt sent to target session',
+                  };
+                  console.log(
+                    `✅ Zone trigger executed: task ${promptResponse.taskId.substring(0, 8)}`
+                  );
+                }
               } else {
                 promptResult = {
                   note: 'Zone trigger template rendered to empty string (check template syntax)',
