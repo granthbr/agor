@@ -164,6 +164,23 @@ export class ConfigService {
       }
     }
 
+    // Allow updating onboarding configuration
+    if (data.onboarding) {
+      if (!config.onboarding) {
+        config.onboarding = {};
+      }
+      if (data.onboarding.assistantPending !== undefined) {
+        config.onboarding.assistantPending = data.onboarding.assistantPending;
+      }
+      // Backward compat: also handle legacy field name
+      if (data.onboarding.persistedAgentPending !== undefined) {
+        config.onboarding.assistantPending = data.onboarding.persistedAgentPending;
+      }
+      if (data.onboarding.frameworkRepoUrl !== undefined) {
+        config.onboarding.frameworkRepoUrl = data.onboarding.frameworkRepoUrl;
+      }
+    }
+
     // Allow updating codex configuration
     if (data.codex) {
       if (!config.codex) {

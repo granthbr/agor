@@ -10,6 +10,7 @@
 import { execSync } from 'node:child_process';
 import { generateId } from '@agor/core/db';
 import type {
+  MCPServerRepository,
   MessagesRepository,
   RepoRepository,
   SessionMCPServerRepository,
@@ -22,6 +23,7 @@ import {
   type Message,
   type MessageID,
   MessageRole,
+  type MessageSource,
   type PermissionMode,
   type SessionID,
   type TaskID,
@@ -61,7 +63,8 @@ export class CodexTool implements ITool {
     apiKey?: string,
     messagesService?: MessagesService,
     tasksService?: TasksService,
-    _useNativeAuth?: boolean // Codex doesn't have OAuth fallback, but accept for interface consistency
+    _useNativeAuth?: boolean, // Codex doesn't have OAuth fallback, but accept for interface consistency
+    mcpServerRepo?: MCPServerRepository
   ) {
     this.messagesRepo = messagesRepo;
     this.sessionsRepo = sessionsRepo;
@@ -75,7 +78,8 @@ export class CodexTool implements ITool {
         sessionMCPServerRepo,
         worktreesRepo,
         reposRepo,
-        apiKey
+        apiKey,
+        mcpServerRepo
       );
     }
   }
@@ -122,7 +126,8 @@ export class CodexTool implements ITool {
     taskId?: TaskID,
     permissionMode?: PermissionMode,
     streamingCallbacks?: StreamingCallbacks,
-    abortController?: AbortController
+    abortController?: AbortController,
+    messageSource?: MessageSource
   ): Promise<CodexExecutionResult> {
     if (!this.promptService || !this.messagesRepo) {
       throw new Error('CodexTool not initialized with repositories for live execution');
@@ -137,7 +142,13 @@ export class CodexTool implements ITool {
     let nextIndex = existingMessages.length;
 
     // Create user message
-    const userMessage = await this.createUserMessage(sessionId, prompt, taskId, nextIndex++);
+    const userMessage = await this.createUserMessage(
+      sessionId,
+      prompt,
+      taskId,
+      nextIndex++,
+      messageSource
+    );
 
     // Execute prompt via Codex SDK with streaming
     const assistantMessageIds: MessageID[] = [];
@@ -148,6 +159,7 @@ export class CodexTool implements ITool {
     let _streamStartTime = Date.now();
     let _firstTokenTime: number | null = null;
     let rawSdkResponse: unknown;
+    let streamStarted = false; // tracks whether onStreamStart succeeded (for safe onStreamEnd)
     let wasStopped = false;
 
     for await (const event of this.promptService.promptSessionStreaming(
@@ -188,28 +200,57 @@ export class CodexTool implements ITool {
       }
 
       // Handle partial streaming events (token-level chunks)
-      // NOTE: Based on official OpenAI sample, partial events are never emitted by Codex SDK
-      // agent_message text arrives all at once in the 'complete' event, not streamed incrementally
-      // This code is kept for future compatibility if OpenAI adds true streaming
+      // NOTE: Codex SDK does NOT emit partial/delta events for text — agent_message text
+      // arrives all at once via item.completed → complete events (which are handled below).
+      // This code path is kept for future compatibility if OpenAI adds true token-level streaming.
       if (event.type === 'partial' && event.textChunk) {
         // Start new message if needed
         if (!currentMessageId) {
-          currentMessageId = generateId() as MessageID;
+          const newMessageId = generateId() as MessageID;
           _firstTokenTime = Date.now();
 
           if (streamingCallbacks) {
-            streamingCallbacks.onStreamStart(currentMessageId, {
-              session_id: sessionId,
-              task_id: taskId,
-              role: MessageRole.ASSISTANT,
-              timestamp: new Date().toISOString(),
-            });
+            try {
+              await streamingCallbacks.onStreamStart(newMessageId, {
+                session_id: sessionId,
+                task_id: taskId,
+                role: MessageRole.ASSISTANT,
+                timestamp: new Date().toISOString(),
+              });
+              // Only track message ID after successful start
+              currentMessageId = newMessageId;
+              streamStarted = true;
+            } catch (err) {
+              console.error(`[Codex] Streaming start failed for ${newMessageId}:`, err);
+              try {
+                await streamingCallbacks.onStreamError(
+                  newMessageId,
+                  err instanceof Error ? err : new Error(String(err))
+                );
+              } catch {
+                /* best-effort */
+              }
+            }
+          } else {
+            currentMessageId = newMessageId;
           }
         }
 
         // Emit chunk immediately
-        if (streamingCallbacks) {
-          streamingCallbacks.onStreamChunk(currentMessageId, event.textChunk);
+        if (streamingCallbacks && currentMessageId) {
+          try {
+            await streamingCallbacks.onStreamChunk(currentMessageId, event.textChunk);
+          } catch (err) {
+            console.error(`[Codex] Streaming chunk failed for ${currentMessageId}:`, err);
+            try {
+              await streamingCallbacks.onStreamError(
+                currentMessageId,
+                err instanceof Error ? err : new Error(String(err))
+              );
+            } catch {
+              /* best-effort */
+            }
+          }
         }
       }
       // Handle tool completion (create message immediately for live updates)
@@ -269,17 +310,47 @@ export class CodexTool implements ITool {
 
         // Only create message if there's text content (not just tools)
         if (textOnlyContent.length > 0) {
-          // Extract full text for client-side streaming
-          const _fullText = textOnlyContent
+          // Extract full text for streaming callback
+          const fullText = textOnlyContent
             .map((block) => (block as { text?: string }).text || '')
             .join('');
 
           // Use existing message ID from streaming (if any) or generate new
           const assistantMessageId = currentMessageId || (generateId() as MessageID);
 
-          // NOTE: Codex SDK doesn't support true streaming for text responses
-          // It only emits item.completed with the full text, no item.updated events
-          // Text is displayed immediately when the complete event arrives
+          // Codex SDK doesn't support token-level text streaming, but we can still
+          // use streaming callbacks to show text immediately via WebSocket before DB write.
+          // This sends the complete text as a single "chunk" for instant display.
+          if (streamingCallbacks && fullText) {
+            try {
+              if (!currentMessageId) {
+                // No partial path — send full start/chunk/end sequence
+                await streamingCallbacks.onStreamStart(assistantMessageId, {
+                  session_id: sessionId,
+                  task_id: taskId,
+                  role: MessageRole.ASSISTANT,
+                  timestamp: new Date().toISOString(),
+                });
+                streamStarted = true;
+                await streamingCallbacks.onStreamChunk(assistantMessageId, fullText);
+              }
+              // Only close stream if one was successfully started
+              if (streamStarted) {
+                await streamingCallbacks.onStreamEnd(assistantMessageId);
+              }
+            } catch (err) {
+              console.error(`[Codex] Streaming callback failed for ${assistantMessageId}:`, err);
+              // Notify UI so it can clear spinner/pending state
+              try {
+                await streamingCallbacks.onStreamError(
+                  assistantMessageId,
+                  err instanceof Error ? err : new Error(String(err))
+                );
+              } catch {
+                /* best-effort */
+              }
+            }
+          }
 
           // Create complete message in DB (text only, tools already saved)
           await this.createAssistantMessage(
@@ -296,6 +367,7 @@ export class CodexTool implements ITool {
 
           // Reset for next message
           currentMessageId = null;
+          streamStarted = false;
         }
 
         _streamStartTime = Date.now();
@@ -324,7 +396,8 @@ export class CodexTool implements ITool {
     sessionId: SessionID,
     prompt: string,
     taskId: TaskID | undefined,
-    nextIndex: number
+    nextIndex: number,
+    messageSource?: MessageSource
   ): Promise<Message> {
     const userMessage: Message = {
       message_id: generateId() as MessageID,
@@ -336,6 +409,7 @@ export class CodexTool implements ITool {
       content_preview: prompt.substring(0, 200),
       content: prompt,
       task_id: taskId,
+      metadata: messageSource ? { source: messageSource } : undefined,
     };
 
     await this.messagesService?.create(userMessage);
@@ -425,7 +499,8 @@ export class CodexTool implements ITool {
     sessionId: SessionID,
     prompt: string,
     taskId?: TaskID,
-    permissionMode?: PermissionMode
+    permissionMode?: PermissionMode,
+    messageSource?: MessageSource
   ): Promise<CodexExecutionResult> {
     if (!this.promptService || !this.messagesRepo) {
       throw new Error('CodexTool not initialized with repositories for live execution');
@@ -440,7 +515,13 @@ export class CodexTool implements ITool {
     let nextIndex = existingMessages.length;
 
     // Create user message
-    const userMessage = await this.createUserMessage(sessionId, prompt, taskId, nextIndex++);
+    const userMessage = await this.createUserMessage(
+      sessionId,
+      prompt,
+      taskId,
+      nextIndex++,
+      messageSource
+    );
 
     // Execute prompt via Codex SDK
     const assistantMessageIds: MessageID[] = [];

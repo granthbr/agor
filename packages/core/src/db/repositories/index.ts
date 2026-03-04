@@ -17,5 +17,6 @@ export * from './sessions';
 export * from './tasks';
 export * from './template-preprocessors';
 export * from './thread-session-map';
+export * from './user-mcp-oauth-tokens';
 export * from './users';
 export * from './worktrees';

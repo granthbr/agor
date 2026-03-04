@@ -24,6 +24,7 @@ import {
   MessageOutlined,
   RobotOutlined,
   TeamOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { Layout, Menu, Modal, theme } from 'antd';
@@ -32,6 +33,7 @@ import { WorktreeModal } from '../WorktreeModal';
 import type { WorktreeUpdate } from '../WorktreeModal/tabs/GeneralTab';
 import { AboutTab } from './AboutTab';
 import { AgenticToolsSection } from './AgenticToolsSection';
+import { AssistantsTable } from './AssistantsTable';
 import { BoardsTable } from './BoardsTable';
 import { GatewayChannelsTable } from './GatewayChannelsTable';
 import { MCPServersTable } from './MCPServersTable';
@@ -199,6 +201,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           label: 'Templates',
           icon: <FileTextOutlined />,
         },
+        {
+          key: 'assistants',
+          label: 'Assistants',
+          icon: <RobotOutlined />,
+        },
       ],
     },
     {
@@ -214,7 +221,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {
           key: 'agentic-tools',
           label: 'Agentic Tools',
-          icon: <RobotOutlined />,
+          icon: <ThunderboltOutlined />,
         },
         {
           key: 'gateway',
@@ -291,6 +298,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         );
       case 'templates':
         return <TemplatesTable client={client} />;
+      case 'assistants':
+        return (
+          <AssistantsTable
+            worktreeById={worktreeById}
+            repoById={repoById}
+            boardById={boardById}
+            sessionsByWorktree={sessionsByWorktree}
+            client={client}
+            onArchiveOrDelete={onArchiveOrDeleteWorktree}
+            onRowClick={handleWorktreeRowClick}
+            onCreateWorktree={onCreateWorktree}
+            onUpdateWorktree={onUpdateWorktree}
+            onStartEnvironment={onStartEnvironment}
+            onStopEnvironment={onStopEnvironment}
+          />
+        );
       case 'mcp':
         return (
           <MCPServersTable

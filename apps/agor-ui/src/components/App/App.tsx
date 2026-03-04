@@ -27,6 +27,7 @@ import {
 import { mapToArray } from '@/utils/mapHelpers';
 import { AppActionsProvider } from '../../contexts/AppActionsContext';
 import { AppDataProvider } from '../../contexts/AppDataContext';
+import { useBoardTitle } from '../../hooks/useBoardTitle';
 import { useEventStream } from '../../hooks/useEventStream';
 import { useFaviconStatus } from '../../hooks/useFaviconStatus';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
@@ -460,6 +461,9 @@ export const App: React.FC<AppProps> = ({
   const sessionSettingsSession = sessionSettingsId ? sessionById.get(sessionSettingsId) : null;
   const currentBoard = boardById.get(currentBoardId);
 
+  // Update browser tab title based on current board
+  useBoardTitle(currentBoard);
+
   // Find worktree and repo for WorktreeModal
   const selectedWorktree = worktreeModalWorktreeId
     ? worktreeById.get(worktreeModalWorktreeId)
@@ -619,35 +623,6 @@ export const App: React.FC<AppProps> = ({
             currentBoardId={currentBoardId}
             onBoardChange={setCurrentBoardId}
             worktreeById={worktreeById}
-            repoCount={repoById.size}
-            worktreeCount={worktreeById.size}
-            hasAuthentication={
-              // Check if user has any AI provider credentials configured
-              !!(
-                user?.api_keys?.ANTHROPIC_API_KEY ||
-                user?.api_keys?.OPENAI_API_KEY ||
-                user?.api_keys?.GEMINI_API_KEY ||
-                user?.env_vars?.ANTHROPIC_API_KEY ||
-                user?.env_vars?.OPENAI_API_KEY ||
-                user?.env_vars?.GEMINI_API_KEY
-              )
-            }
-            onDismissOnboarding={
-              onUpdateUser
-                ? () => {
-                    if (user) {
-                      onUpdateUser(user.user_id, { onboarding_completed: true });
-                    }
-                  }
-                : undefined
-            }
-            onOpenRepoSettings={() => openSettings('repos')}
-            onOpenAuthSettings={() => openSettings('agentic-tools')}
-            onOpenNewWorktree={() => {
-              const center = sessionCanvasRef.current?.getViewportCenter();
-              setNewWorktreeDefaultPosition(center || null);
-              setNewWorktreeModalOpen(true);
-            }}
             boardById={boardById}
             onUserClick={(userId: string, boardId?: BoardID, cursor?: { x: number; y: number }) => {
               // Navigate to the user's board
@@ -674,6 +649,8 @@ export const App: React.FC<AppProps> = ({
               }}
             >
               <Panel
+                id="comments-panel"
+                order={1}
                 ref={commentsPanelRef}
                 collapsible
                 defaultSize={commentsPanelCollapsed ? 0 : commentsPanelSize}
@@ -726,6 +703,8 @@ export const App: React.FC<AppProps> = ({
                 }}
               />
               <Panel
+                id="content-panel"
+                order={2}
                 defaultSize={commentsPanelCollapsed ? 100 : 100 - commentsPanelSize}
                 minSize={40}
               >
@@ -741,6 +720,8 @@ export const App: React.FC<AppProps> = ({
                   }}
                 >
                   <Panel
+                    id="canvas-panel"
+                    order={1}
                     defaultSize={selectedSessionId ? 100 - sessionPanelSize : 100}
                     minSize={20}
                   >
@@ -822,7 +803,13 @@ export const App: React.FC<AppProps> = ({
                             'var(--ant-color-border-secondary)';
                         }}
                       />
-                      <Panel defaultSize={sessionPanelSize} minSize={25} maxSize={75}>
+                      <Panel
+                        id="session-panel"
+                        order={2}
+                        defaultSize={sessionPanelSize}
+                        minSize={25}
+                        maxSize={75}
+                      >
                         {selectedSessionId ? (
                           <SessionPanel
                             client={client}
@@ -959,6 +946,7 @@ export const App: React.FC<AppProps> = ({
               setWorktreeModalWorktreeId(null);
               openSettings();
             }}
+            onSessionClick={setSelectedSessionId}
           />
           <WorktreeListDrawer
             open={listDrawerOpen}

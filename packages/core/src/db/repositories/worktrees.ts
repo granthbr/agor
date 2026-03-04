@@ -5,18 +5,7 @@
  */
 
 import type { AgenticToolName, SessionStatus, UUID, Worktree, WorktreeID } from '@agor/core/types';
-import {
-  and,
-  desc,
-  eq,
-  getTableColumns,
-  inArray,
-  isNotNull,
-  isNull,
-  like,
-  or,
-  sql,
-} from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, inArray, isNotNull, isNull, like, or } from 'drizzle-orm';
 import { formatShortId, generateId } from '../../lib/ids';
 import type { Database } from '../client';
 import { deleteFrom, insert, select, update } from '../database-wrapper';
@@ -291,7 +280,21 @@ export class WorktreeRepository implements BaseRepository<Worktree, Partial<Work
   async findByRepoAndName(repoId: UUID, name: string): Promise<Worktree | null> {
     const row = await select(this.db)
       .from(worktrees)
-      .where(sql`${worktrees.repo_id} = ${repoId} AND ${worktrees.name} = ${name}`)
+      .where(and(eq(worktrees.repo_id, repoId), eq(worktrees.name, name)))
+      .one();
+
+    return row ? this.rowToWorktree(row) : null;
+  }
+
+  /**
+   * Find active (non-archived) worktree by repo_id and name
+   */
+  async findActiveByRepoAndName(repoId: UUID, name: string): Promise<Worktree | null> {
+    const row = await select(this.db)
+      .from(worktrees)
+      .where(
+        and(eq(worktrees.repo_id, repoId), eq(worktrees.name, name), eq(worktrees.archived, false))
+      )
       .one();
 
     return row ? this.rowToWorktree(row) : null;
@@ -676,7 +679,7 @@ export class WorktreeRepository implements BaseRepository<Worktree, Partial<Work
 
           // Truncate to requested length
           if (fullText.length > truncationLength) {
-            fullText = fullText.substring(0, truncationLength) + '...';
+            fullText = `${fullText.substring(0, truncationLength)}...`;
           }
 
           lastMessageBySession.set(sessionId, fullText);
@@ -695,7 +698,7 @@ export class WorktreeRepository implements BaseRepository<Worktree, Partial<Work
         // Get last message and truncate if needed
         let lastMessage = lastMessageBySession.get(sessionId) || '';
         if (lastMessage.length > truncationLength) {
-          lastMessage = lastMessage.substring(0, truncationLength) + '...truncated';
+          lastMessage = `${lastMessage.substring(0, truncationLength)}...truncated`;
         }
 
         // Extract message_count from data column (materialized field)

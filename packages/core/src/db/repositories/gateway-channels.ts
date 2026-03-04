@@ -28,6 +28,9 @@ import {
 /** Sensitive config fields that should be encrypted at rest */
 const SENSITIVE_CONFIG_FIELDS = ['bot_token', 'app_token', 'signing_secret'];
 
+/** Sentinel value used by the API to redact sensitive fields in responses */
+const REDACTED_SENTINEL = '••••••••';
+
 /**
  * Encrypt sensitive fields within a config object
  */
@@ -50,8 +53,15 @@ function decryptConfig(config: Record<string, unknown>): Record<string, unknown>
     if (typeof decrypted[field] === 'string' && decrypted[field]) {
       try {
         decrypted[field] = decryptApiKey(decrypted[field] as string);
-      } catch {
+      } catch (error) {
         // If decryption fails (e.g., key changed), leave as-is
+        console.error(
+          `[gateway-channels] Failed to decrypt ${field}:`,
+          error instanceof Error ? error.message : String(error)
+        );
+        console.error(
+          '[gateway-channels] Channel credentials may be corrupted or master secret changed'
+        );
       }
     }
   }
@@ -225,7 +235,23 @@ export class GatewayChannelRepository
         throw new EntityNotFoundError('GatewayChannel', id);
       }
 
+      // Merge updates, but preserve existing encrypted credentials if update has empty values
       const merged = { ...current, ...updates };
+
+      // Preserve existing credentials if updates contain empty, falsy, or redacted values.
+      // The API redacts sensitive fields to '••••••••' in responses, so if the client
+      // sends that sentinel back it means "no change" — not "set token to bullets".
+      if (updates.config) {
+        const mergedConfig = { ...current.config, ...updates.config };
+        for (const field of SENSITIVE_CONFIG_FIELDS) {
+          const updateValue = updates.config[field];
+          if ((!updateValue || updateValue === REDACTED_SENTINEL) && current.config[field]) {
+            mergedConfig[field] = current.config[field];
+          }
+        }
+        merged.config = mergedConfig;
+      }
+
       const insertData = this.channelToInsert(merged);
 
       await update(this.db, gatewayChannels)

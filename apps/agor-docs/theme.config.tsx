@@ -1,6 +1,7 @@
 import { useRouter } from 'next/router';
 import type { DocsThemeConfig } from 'nextra-theme-docs';
 import { useConfig } from 'nextra-theme-docs';
+import { DISCORD_INVITE_URL, GITHUB_REPO_URL } from './lib/links';
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
 const defaultSiteUrl = 'https://agor.live';
@@ -31,10 +32,10 @@ const config: DocsThemeConfig = {
     </span>
   ),
   project: {
-    link: 'https://github.com/preset-io/agor',
+    link: GITHUB_REPO_URL,
   },
   chat: {
-    link: 'https://discord.gg/HZKWXfgc',
+    link: DISCORD_INVITE_URL,
   },
   docsRepositoryBase: 'https://github.com/preset-io/agor/tree/main/apps/agor-docs',
 
@@ -82,7 +83,8 @@ const config: DocsThemeConfig = {
       'Next-gen agent orchestration for AI coding. Multiplayer workspace for Claude Code, Codex, and Gemini.';
     const fullTitle =
       pageTitle === 'agor' ? 'agor – Next-gen agent orchestration' : `${pageTitle} – agor`;
-    const ogImage = frontMatter.ogImage || frontMatter.image || defaultOgImage;
+    const rawOgImage = frontMatter.ogImage || frontMatter.image || defaultOgImage;
+    const ogImage = rawOgImage.startsWith('http') ? rawOgImage : `${defaultSiteUrl}${rawOgImage}`;
     const ogType = frontMatter.date ? 'article' : 'website';
     const publishedTime = frontMatter.date ? new Date(frontMatter.date).toISOString() : undefined;
     const gaId = process.env.NEXT_PUBLIC_GA_ID;
@@ -147,29 +149,115 @@ const config: DocsThemeConfig = {
           type="application/ld+json"
           // biome-ignore lint/security/noDangerouslySetInnerHtml: JSON-LD is static and controlled, not user-provided.
           dangerouslySetInnerHTML={{
-            __html: JSON.stringify({
-              '@context': 'https://schema.org',
-              '@type': 'SoftwareApplication',
-              name: 'agor',
-              description:
-                'Next-gen agent orchestration for AI coding. Multiplayer workspace for Claude Code, Codex, and Gemini.',
-              applicationCategory: 'DeveloperApplication',
-              operatingSystem: 'macOS, Linux, Windows',
-              offers: {
-                '@type': 'Offer',
-                price: '0',
-                priceCurrency: 'USD',
-              },
-              url: siteUrl,
-              codeRepository: 'https://github.com/mistercrunch/agor',
-              author: {
-                '@type': 'Person',
-                name: 'Maxime Beauchemin',
-              },
-              screenshot: ogImage,
-            }),
+            __html: JSON.stringify(
+              frontMatter.date
+                ? {
+                    '@context': 'https://schema.org',
+                    '@type': 'BlogPosting',
+                    headline: pageTitle,
+                    description,
+                    image: ogImage,
+                    url: siteUrl,
+                    datePublished: new Date(frontMatter.date).toISOString(),
+                    author: {
+                      '@type': 'Person',
+                      name: frontMatter.author || 'Maxime Beauchemin',
+                    },
+                    publisher: {
+                      '@type': 'Organization',
+                      name: 'Agor',
+                      logo: {
+                        '@type': 'ImageObject',
+                        url: `${defaultSiteUrl}/logo.png`,
+                      },
+                    },
+                  }
+                : {
+                    '@context': 'https://schema.org',
+                    '@type': 'SoftwareApplication',
+                    name: 'agor',
+                    description:
+                      'Next-gen agent orchestration for AI coding. Multiplayer workspace for Claude Code, Codex, and Gemini.',
+                    applicationCategory: 'DeveloperApplication',
+                    operatingSystem: 'macOS, Linux, Windows',
+                    offers: {
+                      '@type': 'Offer',
+                      price: '0',
+                      priceCurrency: 'USD',
+                    },
+                    url: siteUrl,
+                    codeRepository: 'https://github.com/preset-io/agor',
+                    author: {
+                      '@type': 'Person',
+                      name: 'Maxime Beauchemin',
+                    },
+                    screenshot: ogImage,
+                  }
+            ),
           }}
         />
+
+        {/* BreadcrumbList JSON-LD for guide/blog/api pages */}
+        {pathname !== '/' && (
+          <script
+            type="application/ld+json"
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: JSON-LD is static and controlled, not user-provided.
+            dangerouslySetInnerHTML={{
+              __html: JSON.stringify({
+                '@context': 'https://schema.org',
+                '@type': 'BreadcrumbList',
+                itemListElement: [
+                  {
+                    '@type': 'ListItem',
+                    position: 1,
+                    name: 'Home',
+                    item: defaultSiteUrl,
+                  },
+                  ...pathname
+                    .split('/')
+                    .filter(Boolean)
+                    .map((segment, index, arr) => ({
+                      '@type': 'ListItem',
+                      position: index + 2,
+                      name:
+                        index === arr.length - 1
+                          ? pageTitle
+                          : segment.charAt(0).toUpperCase() + segment.slice(1).replace(/-/g, ' '),
+                      item: `${defaultSiteUrl}/${arr.slice(0, index + 1).join('/')}`,
+                    })),
+                ],
+              }),
+            }}
+          />
+        )}
+      </>
+    );
+  },
+
+  main: ({ children }) => {
+    // biome-ignore lint/correctness/useHookAtTopLevel: Nextra theme config component
+    const { frontMatter } = useConfig();
+    // biome-ignore lint/correctness/useHookAtTopLevel: Nextra theme config component
+    const { asPath } = useRouter();
+    const isBlogPost = asPath.startsWith('/blog/') && frontMatter.image;
+
+    return (
+      <>
+        {isBlogPost && (
+          // biome-ignore lint/performance/noImgElement: Static blog hero image
+          <img
+            src={frontMatter.image}
+            alt=""
+            style={{
+              width: '100%',
+              borderRadius: '8px',
+              marginBottom: '1.5rem',
+              aspectRatio: '16 / 9',
+              objectFit: 'cover',
+            }}
+          />
+        )}
+        {children}
       </>
     );
   },

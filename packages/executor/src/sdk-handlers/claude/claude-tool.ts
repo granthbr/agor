@@ -29,6 +29,7 @@ import {
   type Message,
   type MessageID,
   MessageRole,
+  type MessageSource,
   type PermissionMode,
   type SessionID,
   type TaskID,
@@ -116,7 +117,9 @@ export class ClaudeTool implements ITool {
     worktreesRepo?: WorktreeRepository,
     reposRepo?: RepoRepository,
     mcpEnabled?: boolean,
-    _useNativeAuth?: boolean // Claude supports `claude login` OAuth, but no special handling needed in tool
+    _useNativeAuth?: boolean, // Claude supports `claude login` OAuth, but no special handling needed in tool
+    // biome-ignore lint/suspicious/noExplicitAny: Feathers service type
+    mcpOAuthNotifyService?: any // Service for notifying UI about OAuth requirements
   ) {
     if (messagesRepo && sessionsRepo) {
       this.promptService = new ClaudePromptService(
@@ -131,7 +134,8 @@ export class ClaudeTool implements ITool {
         worktreesRepo,
         reposRepo,
         messagesService,
-        mcpEnabled
+        mcpEnabled,
+        mcpOAuthNotifyService
       );
     }
   }
@@ -209,7 +213,8 @@ export class ClaudeTool implements ITool {
     taskId?: TaskID,
     permissionMode?: PermissionMode,
     streamingCallbacks?: import('../base').StreamingCallbacks,
-    abortController?: AbortController
+    abortController?: AbortController,
+    messageSource?: MessageSource
   ): Promise<{
     userMessageId: MessageID;
     assistantMessageIds: MessageID[];
@@ -241,7 +246,8 @@ export class ClaudeTool implements ITool {
       prompt,
       taskId,
       nextIndex++,
-      this.messagesService!
+      this.messagesService!,
+      messageSource
     );
 
     // Execute prompt via Agent SDK with streaming
@@ -651,7 +657,8 @@ export class ClaudeTool implements ITool {
     sessionId: SessionID,
     prompt: string,
     taskId?: TaskID,
-    permissionMode?: PermissionMode
+    permissionMode?: PermissionMode,
+    messageSource?: MessageSource
   ): Promise<{
     userMessageId: MessageID;
     assistantMessageIds: MessageID[];
@@ -683,7 +690,8 @@ export class ClaudeTool implements ITool {
       prompt,
       taskId,
       nextIndex++,
-      this.messagesService!
+      this.messagesService!,
+      messageSource
     );
 
     // Execute prompt via Agent SDK

@@ -1,5 +1,6 @@
 import type { AgorClient } from '@agor/core/api';
 import type { Repo, Session, SpawnConfig, User, Worktree } from '@agor/core/types';
+import { getAssistantConfig, isAssistant } from '@agor/core/types';
 import {
   BranchesOutlined,
   ClockCircleOutlined,
@@ -8,44 +9,43 @@ import {
   DragOutlined,
   EditOutlined,
   ForkOutlined,
+  MessageOutlined,
   PlusOutlined,
   PushpinFilled,
+  RobotOutlined,
   SubnodeOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
-import { Badge, Button, Card, Collapse, Space, Spin, Tooltip, Tree, Typography, theme } from 'antd';
+import {
+  Badge,
+  Button,
+  Card,
+  Collapse,
+  ConfigProvider,
+  Space,
+  Spin,
+  Tooltip,
+  Tree,
+  Typography,
+  theme,
+} from 'antd';
 import { AggregationColor } from 'antd/es/color-picker/color';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useConnectionDisabled } from '../../contexts/ConnectionContext';
 import { getSessionDisplayTitle, getSessionTitleStyles } from '../../utils/sessionTitle';
 import { ensureColorVisible, isDarkTheme } from '../../utils/theme';
 import { ArchiveDeleteWorktreeModal } from '../ArchiveDeleteWorktreeModal';
 import { EnvironmentPill } from '../EnvironmentPill';
 import { type ForkSpawnAction, ForkSpawnModal } from '../ForkSpawnModal';
+import { MarkdownRenderer } from '../MarkdownRenderer';
 import { CreatedByTag } from '../metadata';
-import { IssuePill, PullRequestPill } from '../Pill';
+import { ChannelPill, IssuePill, PullRequestPill } from '../Pill';
 import { TaskStatusIcon } from '../TaskStatusIcon';
 import { ToolIcon } from '../ToolIcon';
 import { buildSessionTree, type SessionTreeNode } from './buildSessionTree';
 
 const _WORKTREE_CARD_MAX_WIDTH = 600;
-
-// Inject CSS animation for pulsing glow effect
-if (typeof document !== 'undefined' && !document.getElementById('worktree-card-animations')) {
-  const style = document.createElement('style');
-  style.id = 'worktree-card-animations';
-  style.textContent = `
-    @keyframes worktree-card-pulse {
-      0%, 100% {
-        filter: brightness(1);
-      }
-      50% {
-        filter: brightness(1.3);
-      }
-    }
-  `;
-  document.head.appendChild(style);
-}
+const NOTES_MAX_LENGTH = 200; // Character limit for truncated notes
 
 interface WorktreeCardProps {
   worktree: Worktree;
@@ -128,6 +128,9 @@ const WorktreeCardComponent = ({
   // Tree expansion state - track which nodes are expanded
   const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([]);
 
+  // Notes expansion state
+  const [notesExpanded, setNotesExpanded] = useState(false);
+
   // Handle fork/spawn modal confirm
   const handleForkSpawnConfirm = async (config: string | Partial<SpawnConfig>) => {
     if (!forkSpawnModal.session) return;
@@ -142,41 +145,118 @@ const WorktreeCardComponent = ({
     }
   };
 
-  // Separate manual sessions from scheduled runs
+  // Type guard for gateway source metadata
+  const getGatewaySource = useCallback(
+    (
+      session: Session
+    ):
+      | { channel_id: string; channel_name: string; channel_type: string; thread_id: string }
+      | undefined => {
+      const context = session.custom_context as Record<string, unknown> | undefined;
+      if (!context) return undefined;
+
+      const source = context.gateway_source;
+      if (
+        typeof source === 'object' &&
+        source !== null &&
+        'channel_id' in source &&
+        'channel_name' in source &&
+        'channel_type' in source &&
+        'thread_id' in source &&
+        typeof source.channel_id === 'string' &&
+        typeof source.channel_name === 'string' &&
+        typeof source.channel_type === 'string' &&
+        typeof source.thread_id === 'string'
+      ) {
+        return source as {
+          channel_id: string;
+          channel_name: string;
+          channel_type: string;
+          thread_id: string;
+        };
+      }
+
+      return undefined;
+    },
+    []
+  );
+
+  // Check if session has gateway_source (presence check, not validation)
+  const hasGatewaySource = useCallback((session: Session): boolean => {
+    const context = session.custom_context as Record<string, unknown> | undefined;
+    return !!(
+      context &&
+      typeof context.gateway_source === 'object' &&
+      context.gateway_source !== null
+    );
+  }, []);
+
+  // Helper to check if a session is from gateway (has denormalized gateway metadata)
+  const isGatewaySession = useCallback(
+    (session: Session): boolean => {
+      return hasGatewaySource(session);
+    },
+    [hasGatewaySource]
+  );
+
+  // Filter out archived sessions from board card display
+  const activeSessions = useMemo(() => sessions.filter((s) => !s.archived), [sessions]);
+
+  // Separate sessions by type: manual, scheduled, and gateway
   const manualSessions = useMemo(
-    () => sessions.filter((s) => !s.scheduled_from_worktree),
-    [sessions]
+    () => activeSessions.filter((s) => !s.scheduled_from_worktree && !isGatewaySession(s)),
+    [activeSessions, isGatewaySession]
   );
   const scheduledSessions = useMemo(
     () =>
-      sessions
+      activeSessions
         .filter((s) => s.scheduled_from_worktree)
         .sort((a, b) => (b.scheduled_run_at || 0) - (a.scheduled_run_at || 0)), // Most recent first
-    [sessions]
+    [activeSessions]
+  );
+  const gatewaySessions = useMemo(
+    () => activeSessions.filter((s) => isGatewaySession(s)),
+    [activeSessions, isGatewaySession]
   );
 
   // Build genealogy tree structure (only for manual sessions)
   const sessionTreeData = useMemo(() => buildSessionTree(manualSessions), [manualSessions]);
 
-  // Check if any session is running or stopping
+  // Check if any active (non-archived) session is running or stopping
   const hasRunningSession = useMemo(
-    () => sessions.some((s) => s.status === 'running' || s.status === 'stopping'),
-    [sessions]
+    () => activeSessions.some((s) => s.status === 'running' || s.status === 'stopping'),
+    [activeSessions]
+  );
+
+  // Check if any scheduled session is running (for collapse header spinner)
+  const hasRunningScheduledSession = useMemo(
+    () => scheduledSessions.some((s) => s.status === 'running' || s.status === 'stopping'),
+    [scheduledSessions]
+  );
+
+  // Check if any gateway session is running (for collapse header spinner)
+  const hasRunningGatewaySession = useMemo(
+    () => gatewaySessions.some((s) => s.status === 'running' || s.status === 'stopping'),
+    [gatewaySessions]
   );
 
   // Check if worktree is still being created on filesystem
   const isCreating = worktree.filesystem_status === 'creating';
   const isFailed = worktree.filesystem_status === 'failed';
 
+  // Check if this worktree is a persisted agent
+  const assistantConfig = useMemo(() => getAssistantConfig(worktree), [worktree]);
+  const isAgent = isAssistant(worktree);
+
   // Check if worktree needs attention (newly created OR has ready sessions)
   // Don't highlight if a session from this worktree is currently open in the drawer
   const needsAttention = useMemo(() => {
-    const hasReadySession = sessions.some((s) => s.ready_for_prompt === true);
-    const hasOpenSession = sessions.some((s) => s.session_id === selectedSessionId);
+    const hasReadySession = activeSessions.some((s) => s.ready_for_prompt === true);
+    const hasOpenSession = activeSessions.some((s) => s.session_id === selectedSessionId);
     const shouldHighlight = (worktree.needs_attention || hasReadySession) && !hasOpenSession;
 
     return shouldHighlight;
-  }, [sessions, worktree.needs_attention, selectedSessionId]);
+  }, [activeSessions, worktree.needs_attention, selectedSessionId]);
 
   // Auto-expand all nodes on mount and when new nodes with children are added
   useEffect(() => {
@@ -249,7 +329,7 @@ const WorktreeCardComponent = ({
             : `1px solid rgba(255, 255, 255, 0.1)`,
           borderRadius: 4,
           padding: 8,
-          background: session.ready_for_prompt ? `${token.colorPrimary}15` : 'rgba(0, 0, 0, 0.2)',
+          background: 'transparent',
           display: 'flex',
           alignItems: 'center',
           cursor: 'pointer',
@@ -297,18 +377,17 @@ const WorktreeCardComponent = ({
 
   // Session list content (collapsible) - only used when sessions exist
   const sessionListContent = (
-    <Tree
-      treeData={sessionTreeData}
-      expandedKeys={expandedKeys}
-      onExpand={(keys) => setExpandedKeys(keys as React.Key[])}
-      showLine
-      showIcon={false}
-      selectable={false}
-      titleRender={renderSessionNode}
-      style={{
-        background: 'transparent',
-      }}
-    />
+    <ConfigProvider theme={{ components: { Tree: { colorBgContainer: 'transparent' } } }}>
+      <Tree
+        treeData={sessionTreeData}
+        expandedKeys={expandedKeys}
+        onExpand={(keys) => setExpandedKeys(keys as React.Key[])}
+        showLine
+        showIcon={false}
+        selectable={false}
+        titleRender={renderSessionNode}
+      />
+    </ConfigProvider>
   );
 
   // Session list collapse header
@@ -367,6 +446,7 @@ const WorktreeCardComponent = ({
           showZero
           style={{ backgroundColor: token.colorInfoBgHover }}
         />
+        {hasRunningScheduledSession && <Spin size="small" />}
       </Space>
     </div>
   );
@@ -381,7 +461,7 @@ const WorktreeCardComponent = ({
             border: `1px solid rgba(255, 255, 255, 0.1)`,
             borderRadius: 4,
             padding: 8,
-            background: 'rgba(0, 0, 0, 0.2)',
+            background: 'transparent',
             display: 'flex',
             alignItems: 'center',
             cursor: 'pointer',
@@ -419,6 +499,96 @@ const WorktreeCardComponent = ({
     </div>
   );
 
+  // Gateway sessions header
+  const gatewaySessionsHeader = (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        width: '100%',
+      }}
+    >
+      <Space size={4} align="center">
+        <MessageOutlined style={{ color: token.colorSuccess }} />
+        <Typography.Text strong>Gateway Sessions</Typography.Text>
+        <Badge
+          count={gatewaySessions.length}
+          showZero
+          style={{ backgroundColor: token.colorSuccessBgHover }}
+        />
+        {hasRunningGatewaySession && <Spin size="small" />}
+      </Space>
+    </div>
+  );
+
+  // Gateway sessions content (flat list with channel info)
+  const gatewaySessionsContent = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {gatewaySessions.map((session) => {
+        // Extract denormalized gateway metadata (stamped at session creation)
+        const gatewaySource = getGatewaySource(session);
+
+        return (
+          <div
+            key={session.session_id}
+            style={{
+              border: `1px solid rgba(255, 255, 255, 0.1)`,
+              borderRadius: 4,
+              padding: 8,
+              background: 'transparent',
+              display: 'flex',
+              alignItems: 'center',
+              cursor: 'pointer',
+            }}
+            onClick={() => onSessionClick?.(session.session_id)}
+          >
+            <Space size={4} align="center" style={{ flex: 1, minWidth: 0 }}>
+              <ToolIcon tool={session.agentic_tool} size={20} />
+              <div
+                style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}
+              >
+                <Typography.Text
+                  style={{
+                    fontSize: 12,
+                    ...getSessionTitleStyles(2),
+                  }}
+                >
+                  {getSessionDisplayTitle(session, { includeAgentFallback: true })}
+                </Typography.Text>
+                <div style={{ alignSelf: 'flex-start' }}>
+                  {gatewaySource ? (
+                    <ChannelPill
+                      channelType={gatewaySource.channel_type}
+                      channelName={gatewaySource.channel_name}
+                    />
+                  ) : (
+                    <Typography.Text type="secondary" style={{ fontSize: 11, fontStyle: 'italic' }}>
+                      (Gateway - metadata unavailable)
+                    </Typography.Text>
+                  )}
+                </div>
+              </div>
+            </Space>
+
+            {/* Status indicator */}
+            <div
+              style={{
+                marginLeft: 8,
+                width: 24,
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+              }}
+            >
+              <TaskStatusIcon status={session.status} size={16} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+
   // Use colorTextBase for glow - hex color that adapts to light/dark mode
   // Fallback to detecting dark mode if colorTextBase is not available
   const isDarkMode = isDarkTheme(token);
@@ -449,6 +619,19 @@ const WorktreeCardComponent = ({
     return ensureColorVisible(zoneColor, isDarkMode, 50, 50);
   }, [zoneColor, isDarkMode]);
 
+  // Determine if notes should show "See more" button
+  const notesNeedTruncation = worktree.notes && worktree.notes.length > NOTES_MAX_LENGTH;
+  const displayedNotes = useMemo(() => {
+    if (!worktree.notes) return '';
+    if (!notesNeedTruncation || notesExpanded) return worktree.notes;
+    // Truncate at word boundary for cleaner display
+    const truncated = worktree.notes.slice(0, NOTES_MAX_LENGTH);
+    const lastSpace = truncated.lastIndexOf(' ');
+    return lastSpace > NOTES_MAX_LENGTH * 0.8
+      ? truncated.slice(0, lastSpace) + '...'
+      : truncated + '...';
+  }, [worktree.notes, notesNeedTruncation, notesExpanded]);
+
   return (
     <Card
       style={{
@@ -457,14 +640,16 @@ const WorktreeCardComponent = ({
         transition: 'box-shadow 1s ease-in-out, border 1s ease-in-out',
         ...(needsAttention && !inPopover
           ? {
-              // Intense multi-layer glow for dark mode visibility
-              animation: 'worktree-card-pulse 2s ease-in-out infinite',
+              // Static multi-layer glow (no animation — avoids continuous GPU work)
               boxShadow: attentionGlowShadow,
               border: 'none',
             }
           : isPinned && zoneColor
             ? { borderColor: zoneColor, borderWidth: 1 }
-            : {}),
+            : isAgent
+              ? { borderColor: token.colorInfo, borderWidth: 1 }
+              : {}),
+        ...(isAgent ? { backgroundColor: token.colorInfoBg } : {}),
       }}
       styles={{
         body: { padding: 16 },
@@ -494,6 +679,13 @@ const WorktreeCardComponent = ({
             >
               {isCreating || hasRunningSession ? (
                 <Spin size="large" />
+              ) : isAgent ? (
+                <RobotOutlined
+                  style={{
+                    fontSize: 32,
+                    color: isFailed ? token.colorError : token.colorInfo,
+                  }}
+                />
               ) : (
                 <BranchesOutlined
                   style={{
@@ -506,10 +698,10 @@ const WorktreeCardComponent = ({
           )}
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             <Typography.Text strong className="nodrag">
-              {worktree.name}
+              {assistantConfig?.displayName ?? worktree.name}
             </Typography.Text>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {repo.slug}
+              {assistantConfig ? `${repo.slug} / ${worktree.name}` : repo.slug}
             </Typography.Text>
           </div>
         </Space>
@@ -621,16 +813,46 @@ const WorktreeCardComponent = ({
       {/* Notes */}
       {worktree.notes && (
         <div className="nodrag" style={{ marginBottom: 8 }}>
-          <Typography.Text type="secondary" style={{ fontSize: 12, fontStyle: 'italic' }}>
-            {worktree.notes}
-          </Typography.Text>
+          <div
+            className="markdown-compact"
+            style={{
+              maxHeight: notesExpanded ? 'none' : '120px',
+              overflow: 'hidden',
+              transition: 'max-height 0.3s ease',
+            }}
+          >
+            <MarkdownRenderer
+              content={displayedNotes}
+              style={{ fontSize: 12, color: token.colorTextSecondary, lineHeight: '1.5' }}
+              compact={false}
+              showControls={false}
+            />
+          </div>
+          {notesNeedTruncation && (
+            <Button
+              type="link"
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                setNotesExpanded(!notesExpanded);
+              }}
+              style={{
+                padding: 0,
+                height: 'auto',
+                fontSize: 12,
+                color: token.colorLink,
+              }}
+            >
+              {notesExpanded ? 'See less' : 'See more'}
+            </Button>
+          )}
         </div>
       )}
 
       {/* Sessions & Scheduled Runs - collapsible sections */}
       <div className="nodrag">
-        {sessions.length === 0 ? (
-          // No sessions at all: show create button without collapse wrapper
+        {activeSessions.length === 0 ? (
+          // No active sessions: show create button without collapse wrapper
           <div
             style={{
               display: 'flex',
@@ -676,6 +898,7 @@ const WorktreeCardComponent = ({
                     key: 'sessions',
                     label: sessionListHeader,
                     children: sessionListContent,
+                    styles: { body: { background: 'transparent' } },
                   },
                 ]}
                 ghost
@@ -686,16 +909,36 @@ const WorktreeCardComponent = ({
             {/* Scheduled Runs */}
             {scheduledSessions.length > 0 && (
               <Collapse
-                defaultActiveKey={defaultExpanded ? ['scheduled-runs'] : []}
+                defaultActiveKey={[]}
                 items={[
                   {
                     key: 'scheduled-runs',
                     label: scheduledRunsHeader,
                     children: scheduledRunsContent,
+                    styles: { body: { background: 'transparent' } },
                   },
                 ]}
                 ghost
                 style={{ marginTop: manualSessions.length > 0 ? 0 : 8 }}
+              />
+            )}
+
+            {/* Gateway Sessions */}
+            {gatewaySessions.length > 0 && (
+              <Collapse
+                defaultActiveKey={[]}
+                items={[
+                  {
+                    key: 'gateway-sessions',
+                    label: gatewaySessionsHeader,
+                    children: gatewaySessionsContent,
+                    styles: { body: { background: 'transparent' } },
+                  },
+                ]}
+                ghost
+                style={{
+                  marginTop: manualSessions.length > 0 || scheduledSessions.length > 0 ? 0 : 8,
+                }}
               />
             )}
           </>

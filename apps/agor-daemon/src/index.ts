@@ -46,6 +46,7 @@ import {
   select,
   sessionMcpServers,
   TaskRepository,
+  UserMCPOAuthTokenRepository,
   UsersRepository,
   WorktreeRepository,
 } from '@agor/core/db';
@@ -82,7 +83,9 @@ import type {
   Board,
   HookContext,
   Id,
+  MCPServer,
   Message,
+  MessageSource,
   Paginated,
   Params,
   PermissionRequestContent,
@@ -96,6 +99,7 @@ import type {
 import { SessionStatus, TaskStatus } from '@agor/core/types';
 import { NotFoundError } from '@agor/core/utils/errors';
 
+import { performOAuthDisconnect } from './services/oauth-disconnect.js';
 // Executor spawning utility for fire-and-forget Unix operations
 import {
   configureDaemonUrl,
@@ -103,6 +107,59 @@ import {
   getDaemonUrl,
   spawnExecutorFireAndForget,
 } from './utils/spawn-executor.js';
+
+// ============================================================================
+// Executor PID Tracking
+// ============================================================================
+// In-memory map of session → executor process info for signal-based stopping.
+// When the user clicks Stop, we SIGTERM/SIGKILL the process directly instead of
+// relying on WebSocket ACK protocols.
+const executorProcesses = new Map<string, { pid: number; startedAt: Date }>();
+
+/**
+ * Kill an executor process for a session using Unix signals.
+ *
+ * Phase 1: SIGTERM (allows graceful shutdown — executor's SIGTERM handler
+ *          calls abortController.abort() and patches task status)
+ * Phase 2: After 3 seconds, SIGKILL (uncatchable, guaranteed death)
+ *
+ * @returns true if a process was found and signaled
+ */
+function killExecutorProcess(sessionId: string): boolean {
+  const proc = executorProcesses.get(sessionId);
+  if (!proc) return false;
+
+  try {
+    // Check if process is still alive
+    process.kill(proc.pid, 0);
+  } catch {
+    // Process already dead, clean up tracking
+    executorProcesses.delete(sessionId);
+    return false;
+  }
+
+  console.log(
+    `🛑 [Stop] Sending SIGTERM to executor PID ${proc.pid} (session ${sessionId.substring(0, 8)})`
+  );
+  try {
+    process.kill(proc.pid, 'SIGTERM');
+  } catch (err) {
+    console.warn(`⚠️  [Stop] SIGTERM failed for PID ${proc.pid}:`, err);
+  }
+
+  // Phase 2: SIGKILL after 3 seconds if still alive
+  setTimeout(() => {
+    try {
+      process.kill(proc.pid, 0); // Check if still alive
+      console.log(`🛑 [Stop] Process still alive after 3s, sending SIGKILL to PID ${proc.pid}`);
+      process.kill(proc.pid, 'SIGKILL');
+    } catch {
+      // Process already dead — good
+    }
+  }, 3000);
+
+  return true;
+}
 
 // ============================================================================
 // OAuth 2.1 Token Cache (daemon-level, shared between test-oauth and discover)
@@ -174,6 +231,12 @@ function getOAuth21Token(mcpUrl: string): string | undefined {
   }
   console.log(`[OAuth 2.1 Cache] Found valid token for ${origin}`);
   return cached.token;
+}
+
+function clearOAuth21Token(mcpUrl: string): void {
+  const origin = new URL(mcpUrl).origin;
+  oauth21TokenCache.delete(origin);
+  console.log(`[OAuth 2.1 Cache] Token cleared for ${origin}`);
 }
 
 /**
@@ -377,9 +440,7 @@ interface RouteParams extends Params {
 }
 
 // Determine database URL using centralized logic from @agor/core/db
-// Priority:
-// 1. If AGOR_DB_DIALECT=postgresql, use DATABASE_URL (required for Postgres)
-// 2. Otherwise, use AGOR_DB_PATH or default SQLite path
+// Priority: env vars > config.yaml > defaults (see getDatabaseUrl for details)
 const DB_PATH = getDatabaseUrl();
 
 // Main async function
@@ -650,219 +711,238 @@ async function main() {
   const sessionsService = createSessionsService(db, app) as unknown as SessionsServiceImpl;
   app.use('/sessions', sessionsService, {
     events: [
-      'task_stop', // Custom event for stopping tasks via WebSocket
-      'task_stop_ack', // Executor acknowledges receipt of stop signal
-      'task_stopped_complete', // Executor confirms task fully stopped
+      'permission:request', // Permission request broadcast to UI clients
+      'permission:timeout', // Permission request timed out notification
     ],
   });
 
   // Wire up custom session methods for Feathers/WebSocket executor architecture
-  sessionsService.setExecuteHandler(async (sessionId, data, params) => {
-    // Import spawn and path utilities
-    const { spawn } = await import('node:child_process');
-    const path = await import('node:path');
-    const { fileURLToPath } = await import('node:url');
+  sessionsService.setExecuteHandler(
+    async (
+      sessionId: string,
+      data: {
+        taskId: string;
+        prompt: string;
+        permissionMode?: import('@agor/core/types').PermissionMode;
+        stream?: boolean;
+        messageSource?: MessageSource;
+      },
+      params
+    ) => {
+      // Import spawn and path utilities
+      const { spawn } = await import('node:child_process');
+      const path = await import('node:path');
+      const { fileURLToPath } = await import('node:url');
 
-    // Get session and validate
-    const session = await sessionsService.get(sessionId, params);
-    if (!session) {
-      throw new Error(`Session ${sessionId} not found`);
-    }
-
-    // Generate session token for executor authentication
-    const appWithExecutor = app as unknown as {
-      sessionTokenService?: import('./services/session-token-service').SessionTokenService;
-    };
-    if (!appWithExecutor.sessionTokenService) {
-      throw new Error('Session token service not initialized');
-    }
-    const sessionToken = await appWithExecutor.sessionTokenService.generateToken(
-      sessionId,
-      (params as AuthenticatedParams).user?.user_id || 'anonymous'
-    );
-
-    // Use the task ID provided by caller (task already created by prompt endpoint)
-    const taskId = data.taskId;
-
-    // NOTE: API key resolution is now handled by the executor with proper precedence:
-    // 1. Per-user encrypted keys (from database)
-    // 2. Global config.yaml keys
-    // 3. Environment variables
-    // The executor will let SDKs handle OAuth if no key is found.
-
-    // Get worktree path
-    let cwd = process.cwd();
-    if (session.worktree_id) {
-      try {
-        const worktree = await app.service('worktrees').get(session.worktree_id, params);
-        cwd = worktree.path;
-      } catch (error) {
-        console.warn(`Could not get worktree path for ${session.worktree_id}:`, error);
+      // Get session and validate
+      const session = await sessionsService.get(sessionId, params);
+      if (!session) {
+        throw new Error(`Session ${sessionId} not found`);
       }
-    }
 
-    // Spawn executor process with Feathers/WebSocket mode
-    const dirname =
-      typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
-
-    // Try multiple possible paths for executor (development vs bundled)
-    const { existsSync } = await import('node:fs');
-    const possiblePaths = [
-      path.join(dirname, '../executor/cli.js'), // Bundled in agor-live
-      path.join(dirname, '../../../packages/executor/bin/agor-executor'), // Development - bin script with fallback to tsx
-      path.join(dirname, '../../../packages/executor/dist/cli.js'), // Development from apps/agor-daemon/dist (if built)
-    ];
-
-    const executorPath = possiblePaths.find((p) => existsSync(p));
-    if (!executorPath) {
-      throw new Error(
-        `Executor binary not found. Tried:\n${possiblePaths.map((p) => `  - ${p}`).join('\n')}`
+      // Generate session token for executor authentication
+      const appWithExecutor = app as unknown as {
+        sessionTokenService?: import('./services/session-token-service').SessionTokenService;
+      };
+      if (!appWithExecutor.sessionTokenService) {
+        throw new Error('Session token service not initialized');
+      }
+      const sessionToken = await appWithExecutor.sessionTokenService.generateToken(
+        sessionId,
+        (params as AuthenticatedParams).user?.user_id || 'anonymous'
       );
-    }
 
-    console.log(`[Daemon] Using executor at: ${executorPath}`);
+      // Use the task ID provided by caller (task already created by prompt endpoint)
+      const taskId = data.taskId;
 
-    // =========================================================================
-    // DETERMINE UNIX USER FOR EXECUTOR BASED ON unix_user_mode
-    // Uses centralized logic from @agor/core/unix
-    // =========================================================================
-    const {
-      resolveUnixUserForImpersonation,
-      validateResolvedUnixUser,
-      UnixUserNotFoundError,
-      buildSpawnArgs,
-    } = await import('@agor/core/unix');
+      // NOTE: API key resolution is now handled by the executor with proper precedence:
+      // 1. Per-user encrypted keys (from database)
+      // 2. Global config.yaml keys
+      // 3. Environment variables
+      // The executor will let SDKs handle OAuth if no key is found.
 
-    const unixUserMode = (config.execution?.unix_user_mode ?? 'simple') as UnixUserMode;
-    const configExecutorUser = config.execution?.executor_unix_user;
-    const sessionUnixUser = session.unix_username;
+      // Get worktree path
+      let cwd = process.cwd();
+      if (session.worktree_id) {
+        try {
+          const worktree = await app.service('worktrees').get(session.worktree_id, params);
+          cwd = worktree.path;
+        } catch (error) {
+          console.warn(`Could not get worktree path for ${session.worktree_id}:`, error);
+        }
+      }
 
-    console.log('[Daemon] Determining executor Unix user:', {
-      sessionId: session.session_id.slice(0, 8),
-      unixUserMode,
-      sessionUnixUser,
-      configExecutorUser,
-    });
+      // Spawn executor process with Feathers/WebSocket mode
+      const dirname =
+        typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
 
-    // Use centralized impersonation resolution logic
-    const impersonationResult = resolveUnixUserForImpersonation({
-      mode: unixUserMode,
-      userUnixUsername: sessionUnixUser,
-      executorUnixUser: configExecutorUser,
-    });
+      // Try multiple possible paths for executor (development vs bundled)
+      const { existsSync } = await import('node:fs');
+      const possiblePaths = [
+        path.join(dirname, '../executor/cli.js'), // Bundled in agor-live
+        path.join(dirname, '../../../packages/executor/bin/agor-executor'), // Development - bin script with fallback to tsx
+        path.join(dirname, '../../../packages/executor/dist/cli.js'), // Development from apps/agor-daemon/dist (if built)
+      ];
 
-    const executorUnixUser = impersonationResult.unixUser;
-    const impersonationReason = impersonationResult.reason;
-
-    console.log(`[Daemon] Executor impersonation: ${impersonationReason}`);
-
-    // Determine permission mode: explicit override > session config > 'default'
-    // This ensures session settings (like bypassPermissions) are preserved unless explicitly overridden
-    // Note: 'default' is not part of the executor's Zod schema, so we convert it to undefined
-    const effectivePermissionMode =
-      data.permissionMode || session.permission_config?.mode || undefined;
-    const permissionModeForPayload =
-      effectivePermissionMode === 'default' ? undefined : effectivePermissionMode;
-
-    // Validate Unix user exists for modes that require it
-    try {
-      validateResolvedUnixUser(unixUserMode, executorUnixUser);
-    } catch (err) {
-      if (err instanceof UnixUserNotFoundError) {
+      const executorPath = possiblePaths.find((p) => existsSync(p));
+      if (!executorPath) {
         throw new Error(
-          `${(err as InstanceType<typeof UnixUserNotFoundError>).message}. Ensure the Unix user is created before attempting to execute sessions.`
+          `Executor binary not found. Tried:\n${possiblePaths.map((p) => `  - ${p}`).join('\n')}`
         );
       }
-      throw err;
-    }
 
-    // Resolve user environment variables (includes user's encrypted env vars like GITHUB_TOKEN)
-    // Use the authenticated user (whoever is executing the command), not session creator
-    const userId = (params as AuthenticatedParams).user?.user_id as
-      | import('@agor/core/types').UserID
-      | undefined;
-    // When impersonating, strip HOME/USER/LOGNAME/SHELL so sudo -u can set them
-    const executorEnv = await createUserProcessEnvironment(
-      userId,
-      db,
-      undefined,
-      !!executorUnixUser
-    );
+      console.log(`[Daemon] Using executor at: ${executorPath}`);
 
-    // Add DAEMON_URL to environment so executor can connect back
-    executorEnv.DAEMON_URL = daemonUrl;
+      // =========================================================================
+      // DETERMINE UNIX USER FOR EXECUTOR BASED ON unix_user_mode
+      // Uses centralized logic from @agor/core/unix
+      // =========================================================================
+      const {
+        resolveUnixUserForImpersonation,
+        validateResolvedUnixUser,
+        UnixUserNotFoundError,
+        buildSpawnArgs,
+      } = await import('@agor/core/unix');
 
-    // =========================================================================
-    // PHASE 4: JSON-OVER-STDIN WITH IMPERSONATION AT SPAWN
-    //
-    // Impersonation happens at spawn time using buildSpawnArgs():
-    // - When asUser is set, spawns via `sudo -u $asUser bash -c 'node executor --stdin'`
-    // - Executor runs directly as target user with fresh group memberships
-    // - No "node calling node" indirection
-    //
-    // Benefits:
-    // - Single spawn, not node-within-node
-    // - Fresh group memberships (sudo -u calls initgroups())
-    // - k8s compatible (can use pod security context instead)
-    // - Security: Uses sudo -u (not sudo su) to avoid whitelisting /usr/bin/su
-    // =========================================================================
+      const unixUserMode = (config.execution?.unix_user_mode ?? 'simple') as UnixUserMode;
+      const configExecutorUser = config.execution?.executor_unix_user;
+      const sessionUnixUser = session.unix_username;
 
-    // Build JSON payload for executor (Phase 2 --stdin mode)
-    // Note: asUser is NOT in payload - impersonation happens at spawn time
-    const executorPayload = {
-      command: 'prompt' as const,
-      sessionToken,
-      daemonUrl,
-      env: executorEnv,
-      params: {
-        sessionId,
-        taskId,
-        prompt: data.prompt,
-        tool: session.agentic_tool as 'claude-code' | 'gemini' | 'codex' | 'opencode',
-        permissionMode: permissionModeForPayload as 'ask' | 'auto' | 'allow-all' | undefined,
+      console.log('[Daemon] Determining executor Unix user:', {
+        sessionId: session.session_id.slice(0, 8),
+        unixUserMode,
+        sessionUnixUser,
+        configExecutorUser,
+      });
+
+      // Use centralized impersonation resolution logic
+      const impersonationResult = resolveUnixUserForImpersonation({
+        mode: unixUserMode,
+        userUnixUsername: sessionUnixUser,
+        executorUnixUser: configExecutorUser,
+      });
+
+      const executorUnixUser = impersonationResult.unixUser;
+      const impersonationReason = impersonationResult.reason;
+
+      console.log(`[Daemon] Executor impersonation: ${impersonationReason}`);
+
+      // Determine permission mode: explicit override > session config > 'default'
+      // This ensures session settings (like bypassPermissions) are preserved unless explicitly overridden
+      // Note: 'default' is not part of the executor's Zod schema, so we convert it to undefined
+      const effectivePermissionMode =
+        data.permissionMode || session.permission_config?.mode || undefined;
+      const permissionModeForPayload =
+        effectivePermissionMode === 'default' ? undefined : effectivePermissionMode;
+
+      // Validate Unix user exists for modes that require it
+      try {
+        validateResolvedUnixUser(unixUserMode, executorUnixUser);
+      } catch (err) {
+        if (err instanceof UnixUserNotFoundError) {
+          throw new Error(
+            `${(err as InstanceType<typeof UnixUserNotFoundError>).message}. Ensure the Unix user is created before attempting to execute sessions.`
+          );
+        }
+        throw err;
+      }
+
+      // Resolve user environment variables (includes user's encrypted env vars like GITHUB_TOKEN)
+      // Use the authenticated user (whoever is executing the command), not session creator
+      const userId = (params as AuthenticatedParams).user?.user_id as
+        | import('@agor/core/types').UserID
+        | undefined;
+      // When impersonating, strip HOME/USER/LOGNAME/SHELL so sudo -u can set them
+      const executorEnv = await createUserProcessEnvironment(
+        userId,
+        db,
+        undefined,
+        !!executorUnixUser
+      );
+
+      // Add DAEMON_URL to environment so executor can connect back
+      executorEnv.DAEMON_URL = daemonUrl;
+
+      // =========================================================================
+      // PHASE 4: JSON-OVER-STDIN WITH IMPERSONATION AT SPAWN
+      //
+      // Impersonation happens at spawn time using buildSpawnArgs():
+      // - When asUser is set, spawns via `sudo -u $asUser bash -c 'node executor --stdin'`
+      // - Executor runs directly as target user with fresh group memberships
+      // - No "node calling node" indirection
+      //
+      // Benefits:
+      // - Single spawn, not node-within-node
+      // - Fresh group memberships (sudo -u calls initgroups())
+      // - k8s compatible (can use pod security context instead)
+      // - Security: Uses sudo -u (not sudo su) to avoid whitelisting /usr/bin/su
+      // =========================================================================
+
+      // Build JSON payload for executor (Phase 2 --stdin mode)
+      // Note: asUser is NOT in payload - impersonation happens at spawn time
+      const executorPayload = {
+        command: 'prompt' as const,
+        sessionToken,
+        daemonUrl,
+        env: executorEnv,
+        params: {
+          sessionId,
+          taskId,
+          prompt: data.prompt,
+          tool: session.agentic_tool as 'claude-code' | 'gemini' | 'codex' | 'opencode',
+          permissionMode: permissionModeForPayload as 'ask' | 'auto' | 'allow-all' | undefined,
+          cwd,
+          messageSource: data.messageSource,
+        },
+      };
+
+      // Build spawn command - handles impersonation via sudo -u when executorUnixUser is set
+      const { cmd, args } = buildSpawnArgs('node', [executorPath, '--stdin'], {
+        asUser: executorUnixUser || undefined,
+        env: executorUnixUser ? executorEnv : undefined, // Only inject env when impersonating
+      });
+
+      if (executorUnixUser) {
+        console.log(`[Daemon] Spawning executor as user: ${executorUnixUser}`);
+      } else {
+        console.log(`[Daemon] Spawning executor as current user (no impersonation)`);
+      }
+
+      // Spawn executor with --stdin mode, pipe JSON payload via stdin
+      const executorProcess = spawn(cmd, args, {
         cwd,
-      },
-    };
+        env: executorUnixUser ? undefined : executorEnv, // When impersonating, env is in the command
+        stdio: ['pipe', 'pipe', 'pipe'], // Enable stdin for JSON payload
+      });
 
-    // Build spawn command - handles impersonation via sudo -u when executorUnixUser is set
-    const { cmd, args } = buildSpawnArgs('node', [executorPath, '--stdin'], {
-      asUser: executorUnixUser || undefined,
-      env: executorUnixUser ? executorEnv : undefined, // Only inject env when impersonating
-    });
+      // Track executor PID for signal-based stopping
+      if (executorProcess.pid) {
+        executorProcesses.set(sessionId, { pid: executorProcess.pid, startedAt: new Date() });
+        console.log(`[Executor ${sessionId.slice(0, 8)}] PID: ${executorProcess.pid}`);
+      }
 
-    if (executorUnixUser) {
-      console.log(`[Daemon] Spawning executor as user: ${executorUnixUser}`);
-    } else {
-      console.log(`[Daemon] Spawning executor as current user (no impersonation)`);
-    }
+      // Write JSON payload to stdin
+      executorProcess.stdin?.write(JSON.stringify(executorPayload));
+      executorProcess.stdin?.end();
 
-    // Spawn executor with --stdin mode, pipe JSON payload via stdin
-    const executorProcess = spawn(cmd, args, {
-      cwd,
-      env: executorUnixUser ? undefined : executorEnv, // When impersonating, env is in the command
-      stdio: ['pipe', 'pipe', 'pipe'], // Enable stdin for JSON payload
-    });
+      // Log executor output
+      executorProcess.stdout?.on('data', (data) => {
+        console.log(`[Executor ${sessionId.slice(0, 8)}] ${data.toString().trim()}`);
+      });
 
-    // Write JSON payload to stdin
-    executorProcess.stdin?.write(JSON.stringify(executorPayload));
-    executorProcess.stdin?.end();
+      executorProcess.stderr?.on('data', (data) => {
+        console.error(`[Executor ${sessionId.slice(0, 8)}] ${data.toString().trim()}`);
+      });
 
-    // Log executor output
-    executorProcess.stdout?.on('data', (data) => {
-      console.log(`[Executor ${sessionId.slice(0, 8)}] ${data.toString().trim()}`);
-    });
+      executorProcess.on('exit', async (code) => {
+        console.log(`[Executor ${sessionId.slice(0, 8)}] Exited with code ${code}`);
 
-    executorProcess.stderr?.on('data', (data) => {
-      console.error(`[Executor ${sessionId.slice(0, 8)}] ${data.toString().trim()}`);
-    });
+        // Clean up PID tracking
+        executorProcesses.delete(sessionId);
 
-    executorProcess.on('exit', async (code) => {
-      console.log(`[Executor ${sessionId.slice(0, 8)}] Exited with code ${code}`);
-
-      // Safety net: Update session status back to IDLE when executor completes
-      // The primary session status update happens in TasksService.patch() when task status changes
-      // This is a fallback in case the task status update didn't trigger session status change
-      if (code === 0) {
+        // Safety net: Update session status back to IDLE when executor exits
+        // The primary session status update happens in TasksService.patch() when task status changes
+        // This is a fallback in case the task status update didn't trigger session status change
         try {
           // CRITICAL: Check if THIS task is still the current/latest task before updating
           // If a new task has started while this executor was exiting, we must NOT
@@ -875,7 +955,12 @@ async function main() {
               `⏭️ [Executor] Task ${taskId.slice(0, 8)} is not the latest (latest: ${latestTaskId.slice(0, 8)}), skipping IDLE update`
             );
             // Skip the update - a newer task owns the session state
-          } else if (currentSession.status === SessionStatus.RUNNING) {
+          } else if (
+            currentSession.status === SessionStatus.RUNNING ||
+            currentSession.status === SessionStatus.AWAITING_PERMISSION ||
+            currentSession.status === SessionStatus.TIMED_OUT
+          ) {
+            // Session is still in an active/waiting state but executor is gone — reset to IDLE
             await app.service('sessions').patch(
               sessionId,
               {
@@ -885,7 +970,7 @@ async function main() {
               params
             );
             console.log(
-              `✅ [Executor] Session ${sessionId.slice(0, 8)} status updated to IDLE after executor exit (fallback)`
+              `✅ [Executor] Session ${sessionId.slice(0, 8)} status updated to IDLE after executor exit (was: ${currentSession.status})`
             );
           } else {
             console.log(
@@ -895,36 +980,19 @@ async function main() {
         } catch (error) {
           console.error(`❌ [Executor] Failed to update session status to IDLE:`, error);
         }
-      }
 
-      // Revoke session token after executor exits
-      appWithExecutor.sessionTokenService?.revokeToken(sessionToken);
-    });
+        // Revoke session token after executor exits
+        appWithExecutor.sessionTokenService?.revokeToken(sessionToken);
+      });
 
-    return {
-      success: true,
-      taskId: taskId,
-      status: 'running',
-      streaming: data.stream !== false,
-    };
-  });
-
-  sessionsService.setStopHandler(async (sessionId, data, _params) => {
-    // Emit task_stop event for Feathers/WebSocket executors
-    app.service('sessions').emit('task_stop', {
-      session_id: sessionId,
-      task_id: data.taskId,
-      timestamp: new Date().toISOString(),
-    });
-
-    // NOTE: Stop is handled by the executor listening to WebSocket task:stop event
-    // No IPC needed - executor subprocess watches for status changes via WebSocket
-
-    return {
-      success: true,
-      message: 'Stop signal sent to executor',
-    };
-  });
+      return {
+        success: true,
+        taskId: taskId,
+        status: 'running',
+        streaming: data.stream !== false,
+      };
+    }
+  );
 
   app.use('/tasks', createTasksService(db, app));
   app.use('/leaderboard', createLeaderboardService(db));
@@ -1094,16 +1162,19 @@ async function main() {
   // - OAuth 2.1 with auto-discovery (RFC 9728) - browser-based Authorization Code flow with PKCE
   // - OAuth 2.0 Client Credentials flow - machine-to-machine with client_id/secret
   app.use('/mcp-servers/test-oauth', {
-    async create(data: {
-      mcp_url: string;
-      mcp_server_id?: string; // Optional: if provided, token will be saved to DB
-      token_url?: string;
-      client_id?: string;
-      client_secret?: string;
-      scope?: string;
-      grant_type?: string;
-      start_browser_flow?: boolean; // If true, initiate browser-based OAuth flow
-    }) {
+    async create(
+      data: {
+        mcp_url: string;
+        mcp_server_id?: string; // Optional: if provided, token will be saved to DB
+        token_url?: string;
+        client_id?: string;
+        client_secret?: string;
+        scope?: string;
+        grant_type?: string;
+        start_browser_flow?: boolean; // If true, initiate browser-based OAuth flow
+      },
+      params?: { connection?: { id?: string } }
+    ) {
       // Create repo for DB token storage
       const mcpServerRepo = new MCPServerRepository(db);
       try {
@@ -1170,10 +1241,57 @@ async function main() {
 
             try {
               console.log('[OAuth Test] Calling performMCPOAuthFlow...');
+
+              // Debug: Log full params structure to understand socket connection
+              console.log(
+                '[OAuth Test] Full params:',
+                JSON.stringify(
+                  params,
+                  (key, value) => {
+                    // Avoid circular refs and huge objects - just show keys at top level
+                    if (key === 'connection' && value) {
+                      return { id: value.id, hasIo: !!value.io, keys: Object.keys(value) };
+                    }
+                    return value;
+                  },
+                  2
+                )
+              );
+              console.log('[OAuth Test] app.io available:', !!app.io);
+              console.log(
+                '[OAuth Test] params?.provider:',
+                (params as AuthenticatedParams)?.provider
+              );
+
+              // Custom browser opener: emit WebSocket event to client instead of opening locally
+              const browserOpener = async (authUrl: string) => {
+                // For Feathers socketio, connection may have the socket directly
+                const connection = (params as AuthenticatedParams)?.connection as
+                  | { id?: string }
+                  | undefined;
+                const socketId = connection?.id;
+                if (socketId && app.io) {
+                  console.log(
+                    '[OAuth Test] Emitting oauth:open_browser event to socket:',
+                    socketId
+                  );
+                  app.io.to(socketId).emit('oauth:open_browser', { authUrl });
+                } else {
+                  console.log('[OAuth Test] No socket connection, auth URL:', authUrl);
+                  console.log('[OAuth Test] connection object:', connection);
+                  // Fallback: broadcast to ALL connected clients
+                  // The client should only have one browser tab open doing OAuth
+                  if (app.io) {
+                    console.log('[OAuth Test] Broadcasting oauth:open_browser to all clients');
+                    app.io.emit('oauth:open_browser', { authUrl });
+                  }
+                }
+              };
+
               const token = await performMCPOAuthFlow(
                 wwwAuthenticate!,
                 data.client_id, // Optional client_id
-                (url) => console.log('[OAuth Test] Browser should open:', url)
+                browserOpener // Custom opener emits event to client
               );
               console.log('[OAuth Test] OAuth flow completed, token obtained');
 
@@ -1419,6 +1537,273 @@ async function main() {
     },
   });
 
+  // ============================================================================
+  // TWO-PHASE OAUTH FLOW ENDPOINTS
+  // These endpoints support OAuth when the daemon runs remotely and the
+  // callback server can't receive the OAuth redirect.
+  // ============================================================================
+
+  // Store pending OAuth flow contexts (keyed by state)
+  const pendingOAuthFlows = new Map<
+    string,
+    {
+      context: {
+        metadataUrl: string;
+        tokenEndpoint: string;
+        redirectUri: string;
+        pkceVerifier: string;
+        clientId: string;
+        clientSecret?: string;
+        state: string;
+        authorizationUrl: string;
+      };
+      mcpServerId?: string;
+      userId?: string; // User ID for per-user OAuth tokens
+      oauthMode?: 'per_user' | 'shared'; // OAuth mode from MCP server config
+      createdAt: number;
+    }
+  >();
+
+  // Clean up expired flows (older than 10 minutes)
+  setInterval(() => {
+    const now = Date.now();
+    const tenMinutes = 10 * 60 * 1000;
+    for (const [state, flow] of pendingOAuthFlows.entries()) {
+      if (now - flow.createdAt > tenMinutes) {
+        pendingOAuthFlows.delete(state);
+        console.log('[OAuth] Cleaned up expired flow:', state);
+      }
+    }
+  }, 60_000); // Check every minute
+
+  // Start OAuth flow - returns auth URL and stores context for completion
+  app.use('/mcp-servers/oauth-start', {
+    async create(
+      data: {
+        mcp_url: string;
+        mcp_server_id?: string;
+        client_id?: string;
+      },
+      params?: AuthenticatedParams
+    ) {
+      try {
+        console.log('[OAuth Start] Starting two-phase OAuth flow for:', data.mcp_url);
+
+        // Get user ID from authenticated params
+        const userId = params?.user?.user_id;
+        console.log('[OAuth Start] User ID:', userId);
+
+        // Get OAuth mode from MCP server config if server ID is provided
+        let oauthMode: 'per_user' | 'shared' | undefined;
+        if (data.mcp_server_id) {
+          const mcpServerRepo = new MCPServerRepository(db);
+          const server = await mcpServerRepo.findById(data.mcp_server_id);
+          if (server?.auth?.type === 'oauth') {
+            oauthMode = server.auth.oauth_mode || 'per_user';
+            console.log('[OAuth Start] OAuth mode from server config:', oauthMode);
+          }
+        }
+
+        // Probe the MCP URL to get WWW-Authenticate header
+        const probeResponse = await fetch(data.mcp_url, {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(15_000),
+        });
+
+        const wwwAuthenticate = probeResponse.headers.get('www-authenticate');
+        if (probeResponse.status !== 401 || !wwwAuthenticate?.includes('resource_metadata=')) {
+          return {
+            success: false,
+            error: 'Server does not require OAuth 2.1 authentication',
+          };
+        }
+
+        // Import the two-phase OAuth flow functions
+        const { startMCPOAuthFlow } = await import('@agor/core/tools/mcp/oauth-mcp-transport');
+
+        // Start the flow - this returns auth URL and context
+        const context = await startMCPOAuthFlow(wwwAuthenticate, data.client_id);
+
+        // Store the context for later completion (including user ID and OAuth mode)
+        pendingOAuthFlows.set(context.state, {
+          context,
+          mcpServerId: data.mcp_server_id,
+          userId,
+          oauthMode,
+          createdAt: Date.now(),
+        });
+
+        console.log('[OAuth Start] Flow started, state:', context.state, 'oauthMode:', oauthMode);
+
+        // Emit WebSocket event to open browser on client
+        const connection = params?.connection as { id?: string } | undefined;
+        const socketId = connection?.id;
+        if (socketId && app.io) {
+          console.log('[OAuth Start] Emitting oauth:open_browser to socket:', socketId);
+          app.io.to(socketId).emit('oauth:open_browser', { authUrl: context.authorizationUrl });
+        } else if (app.io) {
+          console.log('[OAuth Start] Broadcasting oauth:open_browser to all clients');
+          app.io.emit('oauth:open_browser', { authUrl: context.authorizationUrl });
+        }
+
+        return {
+          success: true,
+          authorizationUrl: context.authorizationUrl,
+          state: context.state,
+          message:
+            'Browser opened for authentication. After signing in, copy the callback URL and paste it below.',
+        };
+      } catch (error) {
+        console.error('[OAuth Start] Error:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  });
+
+  app.service('mcp-servers/oauth-start').hooks({
+    before: { create: [requireAuth] },
+  });
+
+  // Complete OAuth flow with authorization code
+  app.use('/mcp-servers/oauth-complete', {
+    async create(data: { callback_url: string } | { code: string; state: string }) {
+      try {
+        // Import the completion function
+        const { completeMCPOAuthFlow, parseOAuthCallback } = await import(
+          '@agor/core/tools/mcp/oauth-mcp-transport'
+        );
+
+        let code: string;
+        let state: string;
+
+        // Parse the callback URL or use provided code/state
+        if ('callback_url' in data) {
+          console.log('[OAuth Complete] Parsing callback URL:', data.callback_url);
+          const parsed = parseOAuthCallback(data.callback_url);
+          code = parsed.code;
+          state = parsed.state;
+        } else {
+          code = data.code;
+          state = data.state;
+        }
+
+        console.log('[OAuth Complete] State:', state);
+
+        // Find the pending flow
+        const pendingFlow = pendingOAuthFlows.get(state);
+        if (!pendingFlow) {
+          return {
+            success: false,
+            error: 'OAuth flow expired or not found. Please start the flow again.',
+          };
+        }
+
+        // Complete the flow
+        const token = await completeMCPOAuthFlow(pendingFlow.context, code, state);
+
+        // Remove from pending flows
+        pendingOAuthFlows.delete(state);
+
+        // Cache the token at daemon level
+        cacheOAuth21Token(pendingFlow.context.metadataUrl, token, 3600);
+
+        // Save to database based on OAuth mode
+        if (pendingFlow.mcpServerId) {
+          const oauthMode = pendingFlow.oauthMode || 'per_user';
+
+          if (oauthMode === 'per_user' && pendingFlow.userId) {
+            // Per-user mode: save to user_mcp_oauth_tokens table
+            const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+            await userTokenRepo.saveToken(
+              pendingFlow.userId as import('@agor/core/types').UserID,
+              pendingFlow.mcpServerId as import('@agor/core/types').MCPServerID,
+              token,
+              3600 // 1 hour expiry
+            );
+            console.log(
+              `[OAuth Complete] Per-user token saved for user ${pendingFlow.userId}, server ${pendingFlow.mcpServerId}`
+            );
+          } else {
+            // Shared mode: save to MCP server's auth config
+            const mcpServerRepo = new MCPServerRepository(db);
+            await saveOAuth21TokenToDB(mcpServerRepo, pendingFlow.mcpServerId, token, 3600);
+            console.log(
+              `[OAuth Complete] Shared token saved for server ${pendingFlow.mcpServerId}`
+            );
+          }
+        }
+
+        console.log('[OAuth Complete] Flow completed successfully');
+
+        return {
+          success: true,
+          message: 'OAuth authentication successful!',
+          tokenObtained: true,
+        };
+      } catch (error) {
+        console.error('[OAuth Complete] Error:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  });
+
+  app.service('mcp-servers/oauth-complete').hooks({
+    before: { create: [requireAuth] },
+  });
+
+  // Notify UI that OAuth authentication is needed for MCP servers
+  // Called by executor when MCP servers require authentication
+  app.use('/mcp-servers/oauth-notify', {
+    async create(data: {
+      session_id: string;
+      servers: Array<{ name: string; serverId: string; url: string }>;
+    }) {
+      console.log(
+        `[OAuth Notify] Broadcasting oauth_auth_required for session ${data.session_id}, ` +
+          `servers: ${data.servers.map((s) => s.name).join(', ')}`
+      );
+
+      // Broadcast to all authenticated clients
+      app.io.emit('oauth:auth_required', {
+        session_id: data.session_id,
+        servers: data.servers,
+      });
+
+      return { success: true };
+    },
+  });
+
+  app.service('mcp-servers/oauth-notify').hooks({
+    before: { create: [requireAuth] },
+  });
+
+  // Disconnect OAuth - delete per-user OAuth token and clear all caches for an MCP server
+  app.use('/mcp-servers/oauth-disconnect', {
+    async create(data: { mcp_server_id: string }, params?: AuthenticatedParams) {
+      const { clearAuthCodeTokenCache } = await import('@agor/core/tools/mcp/oauth-mcp-transport');
+
+      return performOAuthDisconnect({
+        userId: params?.user?.user_id,
+        mcpServerId: data.mcp_server_id,
+        userTokenRepo: new UserMCPOAuthTokenRepository(db),
+        mcpServerRepo: new MCPServerRepository(db),
+        oauthTokenCache: oauth21TokenCache,
+        clearCoreTokenCache: clearAuthCodeTokenCache,
+      });
+    },
+  });
+
+  app.service('mcp-servers/oauth-disconnect').hooks({
+    before: { create: [requireAuth] },
+  });
+
   // Discover/Test MCP server capabilities endpoint
   // Accepts either:
   // - mcp_server_id: Test saved server config and persist discovered capabilities
@@ -1600,6 +1985,58 @@ async function main() {
         // Get auth headers (pass MCP URL for OAuth 2.1 token lookup)
         let authHeaders = await resolveMCPAuthHeaders(serverConfig.auth, serverConfig.url);
 
+        // Helper: Open OAuth browser via WebSocket event to client
+        const openOAuthBrowser = async (authUrl: string) => {
+          const connection = params?.connection as { id?: string } | undefined;
+          const socketId = connection?.id;
+          if (socketId && app.io) {
+            console.log('[MCP Discovery] Emitting oauth:open_browser event to socket:', socketId);
+            app.io.to(socketId).emit('oauth:open_browser', { authUrl });
+          } else {
+            console.log('[MCP Discovery] No socket connection, auth URL:', authUrl);
+            console.log('[MCP Discovery] connection object:', connection);
+            if (app.io) {
+              console.log('[MCP Discovery] Broadcasting oauth:open_browser to all clients');
+              app.io.emit('oauth:open_browser', { authUrl });
+            }
+          }
+        };
+
+        // Helper: Probe URL for OAuth 2.1 and acquire token via browser flow
+        const probeAndAcquireOAuthToken = async (mcpUrl: string): Promise<string | undefined> => {
+          try {
+            console.log('[MCP Discovery] Probing for OAuth 2.1...');
+            const probeResponse = await fetch(mcpUrl, {
+              method: 'GET',
+              headers: { Accept: 'application/json' },
+            });
+
+            const wwwAuthenticate = probeResponse.headers.get('www-authenticate');
+
+            if (probeResponse.status === 401 && wwwAuthenticate?.includes('resource_metadata=')) {
+              console.log('[MCP Discovery] OAuth 2.1 detected, starting browser flow...');
+
+              const { performMCPOAuthFlow } = await import(
+                '@agor/core/tools/mcp/oauth-mcp-transport'
+              );
+
+              const token = await performMCPOAuthFlow(wwwAuthenticate, undefined, openOAuthBrowser);
+
+              cacheOAuth21Token(mcpUrl, token, 3600);
+              if (serverId) {
+                await saveOAuth21TokenToDB(mcpServerRepo, serverId, token, 3600);
+              }
+
+              return token;
+            }
+
+            return undefined;
+          } catch (error) {
+            console.error('[MCP Discovery] OAuth token acquisition failed:', error);
+            return undefined;
+          }
+        };
+
         // If no auth headers and auth type is oauth, try to get/obtain OAuth 2.1 token
         if (!authHeaders && serverConfig.auth?.type === 'oauth' && serverConfig.url) {
           // First check daemon-level cache
@@ -1627,42 +2064,10 @@ async function main() {
           }
 
           if (!cachedToken) {
-            // No cached token - probe the URL to see if it needs OAuth 2.1
-            console.log('[MCP Discovery] No cached token, probing for OAuth 2.1...');
-            try {
-              const probeResponse = await fetch(serverConfig.url, {
-                method: 'GET',
-                headers: { Accept: 'application/json' },
-              });
-
-              const wwwAuthenticate = probeResponse.headers.get('www-authenticate');
-
-              if (probeResponse.status === 401 && wwwAuthenticate?.includes('resource_metadata=')) {
-                console.log('[MCP Discovery] OAuth 2.1 detected, starting browser flow...');
-
-                // Import and run the OAuth 2.1 flow
-                const { performMCPOAuthFlow } = await import(
-                  '@agor/core/tools/mcp/oauth-mcp-transport'
-                );
-
-                const token = await performMCPOAuthFlow(
-                  wwwAuthenticate,
-                  undefined, // Let it use DCR
-                  (url) => console.log('[MCP Discovery] Browser opening:', url)
-                );
-
-                // Cache the token in memory
-                cacheOAuth21Token(serverConfig.url, token, 3600);
-
-                // Save to database if we have a server ID
-                if (serverId) {
-                  await saveOAuth21TokenToDB(mcpServerRepo, serverId, token, 3600);
-                }
-
-                cachedToken = token;
-              }
-            } catch (oauthError) {
-              console.error('[MCP Discovery] OAuth 2.1 flow failed:', oauthError);
+            console.log('[MCP Discovery] No cached token, attempting OAuth 2.1 flow...');
+            const freshToken = await probeAndAcquireOAuthToken(serverConfig.url);
+            if (freshToken) {
+              cachedToken = freshToken;
             }
           }
 
@@ -1685,71 +2090,68 @@ async function main() {
           Object.assign(headers, authHeaders);
         }
 
-        // Workaround for MCP SDK session ID bug:
-        // The SDK captures session ID from response but doesn't include it in subsequent requests.
-        // We manually track and inject the session ID.
-        let capturedSessionId: string | undefined;
+        // Helper: Create MCP transport and client with session ID tracking
+        // (Workaround for MCP SDK session ID bug: SDK captures session ID from
+        // response but doesn't include it in subsequent requests)
+        const createMCPConnection = (connHeaders: Record<string, string>) => {
+          let sessionId: string | undefined;
 
-        const sessionAwareFetch: typeof fetch = async (input, init) => {
-          // Inject session ID into request if we have one
-          if (capturedSessionId && init?.headers) {
-            const headersObj =
-              init.headers instanceof Headers
-                ? Object.fromEntries(init.headers.entries())
-                : (init.headers as Record<string, string>);
+          const connSessionAwareFetch: typeof fetch = async (input, init) => {
+            if (sessionId && init?.headers) {
+              const headersObj =
+                init.headers instanceof Headers
+                  ? Object.fromEntries(init.headers.entries())
+                  : (init.headers as Record<string, string>);
 
-            // Only add if not already present
-            if (!headersObj['mcp-session-id']) {
-              console.log('[MCP Discovery] Injecting session ID into request:', capturedSessionId);
-              init = {
-                ...init,
-                headers: {
-                  ...headersObj,
-                  'mcp-session-id': capturedSessionId,
-                },
-              };
+              if (!headersObj['mcp-session-id']) {
+                console.log('[MCP Discovery] Injecting session ID into request:', sessionId);
+                init = {
+                  ...init,
+                  headers: {
+                    ...headersObj,
+                    'mcp-session-id': sessionId,
+                  },
+                };
+              }
             }
-          }
 
-          const response = await fetch(input, init);
+            const response = await fetch(input, init);
 
-          // Capture session ID from response
-          const sessionId = response.headers.get('mcp-session-id');
-          if (sessionId) {
-            capturedSessionId = sessionId;
-            console.log('[MCP Discovery] Captured session ID:', sessionId);
-          }
+            const respSessionId = response.headers.get('mcp-session-id');
+            if (respSessionId) {
+              sessionId = respSessionId;
+              console.log('[MCP Discovery] Captured session ID:', respSessionId);
+            }
 
-          console.log(
-            '[MCP Discovery] Response:',
-            response.status,
-            response.statusText,
-            'session-id:',
-            sessionId || '<none>'
+            console.log(
+              '[MCP Discovery] Response:',
+              response.status,
+              response.statusText,
+              'session-id:',
+              respSessionId || '<none>'
+            );
+
+            return response;
+          };
+
+          const transport = new StreamableHTTPClientTransport(new URL(serverConfig.url!), {
+            fetch: connSessionAwareFetch,
+            requestInit: { headers: connHeaders },
+          });
+
+          const mcpClient = new Client(
+            { name: 'agor-discovery', version: '1.0.0' },
+            { capabilities: {} }
           );
 
-          return response;
+          return { transport, client: mcpClient };
         };
 
-        // Create Streamable HTTP transport (supports both SSE and regular HTTP)
-        const httpTransport = new StreamableHTTPClientTransport(new URL(serverConfig.url), {
-          fetch: sessionAwareFetch,
-          requestInit: {
-            headers,
-          },
-        });
+        // Track whether we used a cached OAuth token (for retry logic)
+        const hadCachedOAuthToken = !!(authHeaders && serverConfig.auth?.type === 'oauth');
 
-        // Create MCP client
-        const client = new Client(
-          {
-            name: 'agor-discovery',
-            version: '1.0.0',
-          },
-          {
-            capabilities: {},
-          }
-        );
-
+        // Create initial MCP connection
+        let { transport: httpTransport, client } = createMCPConnection(headers);
         let connected = false;
 
         try {
@@ -1757,26 +2159,66 @@ async function main() {
           console.log('[MCP Discovery] URL:', serverConfig.url);
           console.log('[MCP Discovery] Headers:', JSON.stringify(headers, null, 2));
 
-          // Add timeout to prevent hanging indefinitely (10s should be plenty)
-          const connectTimeout = new Promise<never>((_, reject) => {
-            setTimeout(() => {
-              console.error(
-                '[MCP Discovery] ❌ Connection timeout - server did not respond in 10 seconds'
-              );
-              console.error(
-                '[MCP Discovery] This likely means the MCP SDK cannot establish a connection'
-              );
-              reject(new Error('Connection timeout after 10 seconds'));
-            }, 10000);
-          });
+          // Helper: connect with 10s timeout
+          const connectWithTimeout = async (
+            mcpClient: InstanceType<typeof Client>,
+            mcpTransport: InstanceType<typeof StreamableHTTPClientTransport>
+          ) => {
+            const timeout = new Promise<never>((_, reject) => {
+              setTimeout(() => {
+                console.error(
+                  '[MCP Discovery] ❌ Connection timeout - server did not respond in 10 seconds'
+                );
+                reject(new Error('Connection timeout after 10 seconds'));
+              }, 10000);
+            });
+            const conn = mcpClient.connect(mcpTransport).catch((err: unknown) => {
+              console.error('[MCP Discovery] ❌ Connection error during connect():', err);
+              throw err;
+            });
+            await Promise.race([conn, timeout]);
+          };
 
           console.log('[MCP Discovery] Calling client.connect()...');
-          const connectPromise = client.connect(httpTransport).catch((err) => {
-            console.error('[MCP Discovery] ❌ Connection error during connect():', err);
-            throw err;
-          });
+          try {
+            await connectWithTimeout(client, httpTransport);
+          } catch (connectError) {
+            // If we used a cached OAuth token, clear it and try re-acquiring via browser flow
+            if (hadCachedOAuthToken && serverConfig.url && serverConfig.auth?.type === 'oauth') {
+              console.log(
+                '[MCP Discovery] Connection failed with cached OAuth token, attempting re-auth...'
+              );
 
-          await Promise.race([connectPromise, connectTimeout]);
+              // Clear the stale cached token
+              clearOAuth21Token(serverConfig.url);
+
+              // Acquire a fresh token via OAuth browser flow
+              const freshToken = await probeAndAcquireOAuthToken(serverConfig.url);
+
+              if (freshToken) {
+                console.log('[MCP Discovery] Got fresh OAuth token, retrying connection...');
+
+                // Build fresh headers with new token
+                const freshHeaders: Record<string, string> = {
+                  Accept: 'application/json, text/event-stream',
+                  Authorization: `Bearer ${freshToken}`,
+                };
+
+                // Create new transport and client for retry
+                const retry = createMCPConnection(freshHeaders);
+                httpTransport = retry.transport;
+                client = retry.client;
+
+                // Retry connection with fresh token
+                await connectWithTimeout(client, httpTransport);
+              } else {
+                throw connectError;
+              }
+            } else {
+              throw connectError;
+            }
+          }
+
           connected = true;
           console.log('[MCP Discovery] ✅ Successfully connected!');
 
@@ -2397,6 +2839,93 @@ async function main() {
     },
   });
 
+  // Hook to inject per-user OAuth tokens into MCP server responses
+  const injectPerUserOAuthTokens = async (context: HookContext) => {
+    // Try multiple sources for user ID:
+    // 1. params.user (from socket authentication)
+    // 2. query.forUserId (explicitly passed from executor for per-user OAuth)
+    const queryForUserId = (context.params?.query as Record<string, unknown>)?.forUserId as
+      | string
+      | undefined;
+    const userId = context.params?.user?.user_id || queryForUserId;
+    const source = context.params?.user?.user_id
+      ? 'socket-auth'
+      : queryForUserId
+        ? 'query-param'
+        : 'none';
+    console.log(
+      `[MCP OAuth] injectPerUserOAuthTokens called - userId: ${userId || 'NONE'}, ` +
+        `source: ${source}, provider: ${context.params?.provider || 'internal'}, ` +
+        `method: ${context.method}, resultCount: ${Array.isArray(context.result) ? context.result.length : 1}`
+    );
+    if (!userId) {
+      console.log('[MCP OAuth] No user ID - skipping token injection');
+      return context;
+    }
+
+    const injectToken = async (server: MCPServer) => {
+      // Only process OAuth servers with per_user mode
+      if (server.auth?.type !== 'oauth' || server.auth?.oauth_mode !== 'per_user') {
+        console.log(
+          `[MCP OAuth] Server ${server.name}: authType=${server.auth?.type}, ` +
+            `oauthMode=${server.auth?.oauth_mode} - skipping (not per_user OAuth)`
+        );
+        return server;
+      }
+
+      console.log(
+        `[MCP OAuth] Server ${server.name}: per_user OAuth mode - checking for user token...`
+      );
+
+      try {
+        const userTokenRepo = new UserMCPOAuthTokenRepository(db);
+        const token = await userTokenRepo.getValidToken(
+          userId as import('@agor/core/types').UserID,
+          server.mcp_server_id
+        );
+
+        if (token) {
+          console.log(
+            `[MCP OAuth] ✅ Found valid token for user ${userId.substring(0, 8)}, ` +
+              `server ${server.name} - injecting into auth config`
+          );
+          // Inject per-user token into the server's auth config
+          return {
+            ...server,
+            auth: {
+              ...server.auth,
+              oauth_access_token: token,
+              // Don't include expiry - the token is already validated
+            },
+          };
+        } else {
+          console.log(
+            `[MCP OAuth] ❌ No valid token for user ${userId.substring(0, 8)}, ` +
+              `server ${server.name} - user needs to authenticate`
+          );
+        }
+      } catch (error) {
+        console.warn(
+          `[MCP OAuth] Failed to get per-user token for ${server.name}:`,
+          error instanceof Error ? error.message : error
+        );
+      }
+
+      return server;
+    };
+
+    // Handle both single result and array/paginated results
+    if (Array.isArray(context.result)) {
+      context.result = await Promise.all(context.result.map(injectToken));
+    } else if (context.result?.data && Array.isArray(context.result.data)) {
+      context.result.data = await Promise.all(context.result.data.map(injectToken));
+    } else if (context.result?.mcp_server_id) {
+      context.result = await injectToken(context.result);
+    }
+
+    return context;
+  };
+
   app.service('mcp-servers').hooks({
     before: {
       all: [
@@ -2408,6 +2937,10 @@ async function main() {
       patch: [requireMinimumRole('admin', 'update MCP servers')],
       remove: [requireMinimumRole('admin', 'delete MCP servers')],
     },
+    after: {
+      find: [injectPerUserOAuthTokens],
+      get: [injectPerUserOAuthTokens],
+    },
   });
 
   app.service('session-mcp-servers').hooks({
@@ -2415,15 +2948,45 @@ async function main() {
       all: [requireAuth],
       find: [requireMinimumRole('member', 'list session MCP servers')],
     },
+    after: {
+      find: [injectPerUserOAuthTokens],
+    },
   });
 
   // Refresh the gateway's in-memory channel state when channels are mutated.
   // This allows routeMessage() to skip DB lookups entirely when no channels exist.
+  // Also starts/stops Socket Mode listeners for created/updated/deleted channels.
   const refreshGatewayChannelState = async (context: HookContext) => {
     const gw = context.app.service('gateway') as unknown as GatewayService;
+
+    // Refresh the hasActiveChannels flag
     gw.refreshChannelState().catch((err: unknown) =>
       console.warn('[gateway] Failed to refresh channel state:', err)
     );
+
+    // Start/stop listener for created/updated channel
+    const channel = context.result as { id: string } | undefined;
+    if (channel?.id) {
+      gw.startListenerForChannel(channel.id).catch((err: unknown) =>
+        console.warn(`[gateway] Failed to manage listener for channel ${channel.id}:`, err)
+      );
+    }
+
+    return context;
+  };
+
+  // Stop listener when channel is deleted
+  const stopGatewayChannelListener = async (context: HookContext) => {
+    const gw = context.app.service('gateway') as unknown as GatewayService;
+
+    // Stop listener for deleted channel (use id from route params)
+    const channelId = context.id as string | undefined;
+    if (channelId) {
+      gw.stopChannelListener(channelId).catch((err: unknown) =>
+        console.warn(`[gateway] Failed to stop listener for channel ${channelId}:`, err)
+      );
+    }
+
     return context;
   };
 
@@ -2459,7 +3022,7 @@ async function main() {
       ],
       create: [refreshGatewayChannelState],
       patch: [refreshGatewayChannelState],
-      remove: [refreshGatewayChannelState],
+      remove: [stopGatewayChannelListener, refreshGatewayChannelState],
     },
   });
 
@@ -3686,16 +4249,32 @@ async function main() {
           prompt: string;
           permissionMode?: import('@agor/core/types').PermissionMode;
           stream?: boolean;
+          messageSource?: MessageSource;
         },
         params: RouteParams
       ) {
         console.log(`📨 [Daemon] Prompt request for session ${params.route?.id?.substring(0, 8)}`);
         console.log(`   Permission mode: ${data.permissionMode || 'not specified'}`);
         console.log(`   Streaming: ${data.stream !== false}`);
+        console.log(`   Message source: ${data.messageSource || 'not specified'}`);
 
         const id = params.route?.id;
         if (!id) throw new Error('Session ID required');
         if (!data.prompt) throw new Error('Prompt required');
+
+        // Validate and normalize messageSource
+        let messageSource: 'gateway' | 'agor' | undefined = data.messageSource;
+        if (
+          messageSource !== undefined &&
+          messageSource !== 'gateway' &&
+          messageSource !== 'agor'
+        ) {
+          // Invalid value - default to 'agor' for UI requests (params.provider present) or undefined for internal
+          console.warn(
+            `[Daemon] Invalid messageSource value: ${messageSource}, defaulting based on provider`
+          );
+          messageSource = params.provider ? 'agor' : undefined;
+        }
 
         // Get session to find current message count
         const session = await sessionsService.get(id, params);
@@ -3703,6 +4282,56 @@ async function main() {
         // Reject prompts if session is stopping
         if (session.status === SessionStatus.STOPPING) {
           throw new Error('Cannot send prompt: session is currently stopping');
+        }
+
+        // Queue guard: enforce one-task-at-a-time guarantee server-side.
+        // If the session is not idle OR there are already queued messages (FIFO preservation),
+        // auto-queue this prompt instead of executing it immediately.
+        // The queue processor sets _fromQueue to bypass this check when dequeuing.
+        // SECURITY: Only honor _fromQueue for internal service calls (no provider).
+        // External clients (REST/WebSocket) set params.provider, so they can't bypass the guard.
+        const isInternalCall = !params.provider;
+        if (!((data as Record<string, unknown>)._fromQueue && isInternalCall)) {
+          const queueCheckRepo = new MessagesRepository(db);
+          const queuedItems = await queueCheckRepo.findQueued(id as SessionID);
+          const hasQueuedItems = queuedItems.length > 0;
+
+          if (session.status !== SessionStatus.IDLE || hasQueuedItems) {
+            // Auto-queue the message
+            const queuedMessage = await queueCheckRepo.createQueued(id as SessionID, data.prompt, {
+              queued_by_user_id: params.user?.user_id,
+            });
+
+            console.log(
+              `📬 [Prompt] Auto-queued message for session ${id.substring(0, 8)} at position ${queuedMessage.queue_position} ` +
+                `(session status: ${session.status}, existing queue items: ${queuedItems.length})`
+            );
+
+            // Emit event for real-time UI updates
+            app.service('messages').emit('queued', queuedMessage);
+
+            // If session is idle but had queued items, trigger queue processing
+            // to maintain FIFO order (the existing queued items should run first)
+            if (session.status === SessionStatus.IDLE) {
+              setImmediate(async () => {
+                try {
+                  await sessionsService.triggerQueueProcessing(id as SessionID, params);
+                } catch (error) {
+                  console.error(
+                    `❌ [Prompt] Failed to trigger queue processing after auto-queue:`,
+                    error
+                  );
+                }
+              });
+            }
+
+            return {
+              success: true,
+              queued: true,
+              message: queuedMessage,
+              queue_position: queuedMessage.queue_position,
+            };
+          }
         }
 
         console.log(`   Session agent: ${session.agentic_tool}`);
@@ -3846,6 +4475,7 @@ async function main() {
                 prompt: data.prompt,
                 permissionMode: data.permissionMode,
                 stream: useStreaming,
+                messageSource,
               },
               params
             );
@@ -4154,6 +4784,10 @@ async function main() {
   );
 
   // Stop execution endpoint
+  //
+  // Simple, reliable stop: kill the executor process with Unix signals.
+  // SIGTERM for grace (executor's handler calls abort + patches task),
+  // SIGKILL after 3s for certainty. No WebSocket ACK protocol, no waiting.
   registerAuthenticatedRoute(
     app,
     '/sessions/:id/stop',
@@ -4162,114 +4796,100 @@ async function main() {
         const id = params.route?.id;
         if (!id) throw new Error('Session ID required');
 
-        // Get session to check status
         const session = await sessionsService.get(id, params);
 
-        // Check if session is actually running or awaiting permission
-        if (
-          session.status !== SessionStatus.RUNNING &&
-          session.status !== SessionStatus.AWAITING_PERMISSION
-        ) {
+        // Allow stop for any active state (RUNNING, AWAITING_PERMISSION, STOPPING)
+        const activeStates: SessionStatus[] = [
+          SessionStatus.RUNNING,
+          SessionStatus.AWAITING_PERMISSION,
+          SessionStatus.STOPPING,
+        ];
+        if (!activeStates.includes(session.status as SessionStatus)) {
           return {
             success: false,
-            reason: `Session is not running (status: ${session.status})`,
+            reason: `Session cannot be stopped (status: ${session.status})`,
           };
         }
 
-        // Find the currently running task(s)
-        // Note: Using two separate queries to avoid $in operator which fails schema validation
-        let runningTasksArray: Task[] = [];
-        // Query for RUNNING tasks
-        const runningResult = await tasksService.find({
-          query: {
-            session_id: id,
-            status: TaskStatus.RUNNING,
-            $limit: 10,
-          },
-        });
-        const runningFindResult = runningResult as Task[] | Paginated<Task>;
-        const runningTasks = isPaginated(runningFindResult)
-          ? runningFindResult.data
-          : runningFindResult;
+        // Find the active task (RUNNING, AWAITING_PERMISSION, or STOPPING)
+        const targetTasksArray: Task[] = [];
 
-        // Query for AWAITING_PERMISSION tasks
-        const awaitingResult = await tasksService.find({
-          query: {
-            session_id: id,
-            status: TaskStatus.AWAITING_PERMISSION,
-            $limit: 10,
-          },
-        });
-        const awaitingFindResult = awaitingResult as Task[] | Paginated<Task>;
-        const awaitingTasks = isPaginated(awaitingFindResult)
-          ? awaitingFindResult.data
-          : awaitingFindResult;
-
-        runningTasksArray = [...runningTasks, ...awaitingTasks];
-
-        if (runningTasksArray.length === 0) {
-          return {
-            success: false,
-            reason: 'No running tasks found',
-          };
-        }
-
-        const latestTask = runningTasksArray[runningTasksArray.length - 1];
-
-        // PHASE 1: Atomically update task AND session to STOPPING
-        try {
-          // Update task status to STOPPING
-          await tasksService.patch(latestTask.task_id, {
-            status: TaskStatus.STOPPING,
+        for (const status of [
+          TaskStatus.RUNNING,
+          TaskStatus.AWAITING_PERMISSION,
+          TaskStatus.STOPPING,
+        ]) {
+          const result = await tasksService.find({
+            query: { session_id: id, status, $limit: 10 },
           });
+          const findResult = result as Task[] | Paginated<Task>;
+          const tasks = isPaginated(findResult) ? findResult.data : findResult;
+          targetTasksArray.push(...tasks);
+        }
 
-          // Update session status to STOPPING
+        if (targetTasksArray.length === 0) {
+          // No active tasks — just reset session to IDLE (it's stuck)
+          console.warn(
+            `⚠️  [Stop] No active tasks for session ${id.substring(0, 8)}, resetting to IDLE`
+          );
           await app.service('sessions').patch(
             id,
             {
-              status: SessionStatus.STOPPING,
-              ready_for_prompt: false, // Prevent new prompts during stop
+              status: SessionStatus.IDLE,
+              ready_for_prompt: false,
+            },
+            params
+          );
+          return { success: true, reason: 'No active tasks found, session reset to idle' };
+        }
+
+        // Pick the most recent task
+        targetTasksArray.sort((a, b) => {
+          const timeA = new Date(a.started_at || a.created_at).getTime();
+          const timeB = new Date(b.started_at || b.created_at).getTime();
+          return timeB - timeA;
+        });
+        const latestTask = targetTasksArray[0];
+
+        console.log(
+          `🛑 [Stop] Stopping task ${latestTask.task_id.substring(0, 8)} for session ${id.substring(0, 8)}`
+        );
+
+        // Kill the executor process (SIGTERM → 3s → SIGKILL)
+        const processKilled = killExecutorProcess(id);
+        if (!processKilled) {
+          console.warn(
+            `⚠️  [Stop] No tracked process for session ${id.substring(0, 8)} — executor may have already exited`
+          );
+        }
+
+        // Immediately update state — don't wait for the process to die.
+        // The executor's SIGTERM handler will also try to patch task → stopped,
+        // but we do it here first for instant UI feedback. The tasks.ts patch hook
+        // guards against double-updates (wasAlreadyTerminal check).
+        try {
+          await tasksService.patch(latestTask.task_id, {
+            status: TaskStatus.STOPPED,
+            completed_at: new Date().toISOString(),
+          });
+        } catch (error) {
+          console.error(`❌ [Stop] Failed to patch task to STOPPED:`, error);
+        }
+
+        try {
+          await app.service('sessions').patch(
+            id,
+            {
+              status: SessionStatus.IDLE,
+              ready_for_prompt: false, // Don't auto-start queued messages after user-initiated stop
             },
             params
           );
         } catch (error) {
-          return {
-            success: false,
-            reason: `Failed to update status: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          };
+          console.error(`❌ [Stop] Failed to patch session to IDLE:`, error);
         }
 
-        // PHASE 2: Use bulletproof stop handler with ACK protocol
-        const { handleStopWithAck } = await import('./services/sessions/hooks/handle-stop.js');
-
-        const result = await handleStopWithAck(
-          app,
-          id as SessionID,
-          latestTask.task_id as TaskID,
-          params
-        );
-
-        // PHASE 3: Handle failed stop (revert to RUNNING)
-        if (!result.success) {
-          try {
-            await tasksService.patch(latestTask.task_id, {
-              status: TaskStatus.RUNNING,
-            });
-
-            await app.service('sessions').patch(
-              id,
-              {
-                status: SessionStatus.RUNNING,
-                ready_for_prompt: false,
-              },
-              params
-            );
-          } catch (error) {
-            console.error(`❌ [Daemon] Failed to revert status:`, error);
-          }
-        }
-
-        return result;
+        return { success: true };
       },
     },
     {
@@ -4492,14 +5112,19 @@ async function main() {
     // This creates task, user message, executes agent, etc.
     // IMPORTANT: Use messageParams (reconstructed from queued message metadata)
     // to preserve the original user's authentication context
+    // NOTE: _fromQueue bypasses the queue guard in the prompt endpoint to prevent re-queueing
     const promptService = app.service('/sessions/:id/prompt') as {
-      create: (data: { prompt: string; stream?: boolean }, params: RouteParams) => Promise<unknown>;
+      create: (
+        data: { prompt: string; stream?: boolean; _fromQueue?: boolean },
+        params: RouteParams
+      ) => Promise<unknown>;
     };
 
     await promptService.create(
       {
         prompt,
         stream: true,
+        _fromQueue: true,
       },
       {
         ...messageParams,
@@ -4531,13 +5156,14 @@ async function main() {
         if (!data.requestId) throw new Error('requestId required');
         if (typeof data.allow !== 'boolean') throw new Error('allow field required');
 
-        // Find the permission request message
+        // Find the permission request message by querying only permission_request type messages.
+        // No $limit override — the type filter at DB level ensures we only fetch
+        // permission_request messages, not all session messages.
         const messagesService = app.service('messages');
         const messages = await messagesService.find({
           query: {
             session_id: id,
             type: 'permission_request',
-            $limit: 100, // Get recent permission requests
           },
         });
 
@@ -4554,6 +5180,16 @@ async function main() {
 
         // Type-safe access to permission content
         const permissionContent = permissionMessage.content as PermissionRequestContent;
+
+        // If already resolved (timed out, approved, or denied), return informative response
+        if (permissionContent?.status && permissionContent.status !== 'pending') {
+          return {
+            success: false,
+            alreadyResolved: true,
+            status: permissionContent.status,
+            message: `Permission request already ${permissionContent.status}`,
+          };
+        }
 
         // Resolve task_id with fallback for backward compatibility:
         // 1. Try content.task_id (new messages)
@@ -5248,6 +5884,20 @@ async function main() {
           label: config.daemon?.instanceLabel,
           description: config.daemon?.instanceDescription,
         },
+        onboarding: {
+          assistantPending:
+            config.onboarding?.assistantPending ??
+            config.onboarding?.persistedAgentPending ??
+            false,
+          frameworkRepoUrl: config.onboarding?.frameworkRepoUrl,
+          systemCredentials: {
+            ANTHROPIC_API_KEY: !!(
+              config.credentials?.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY
+            ),
+            OPENAI_API_KEY: !!(config.credentials?.OPENAI_API_KEY || process.env.OPENAI_API_KEY),
+            GEMINI_API_KEY: !!(config.credentials?.GEMINI_API_KEY || process.env.GEMINI_API_KEY),
+          },
+        },
       };
 
       // If user is authenticated (via requireAuth hook check), provide detailed info
@@ -5423,7 +6073,7 @@ async function main() {
   // Setup MCP routes (if enabled)
   if (config.daemon?.mcpEnabled !== false) {
     const { setupMCPRoutes } = await import('./mcp/routes.js');
-    setupMCPRoutes(app);
+    setupMCPRoutes(app, db);
     console.log('✅ MCP server enabled at POST /mcp');
   } else {
     console.log('🔒 MCP server disabled via config (daemon.mcpEnabled=false)');
@@ -5457,26 +6107,30 @@ async function main() {
     }
   }
 
-  // Find all running sessions (should be stopped when daemon restarts)
-  const orphanedSessionsResult = (await sessionsService.find({
-    query: {
-      status: SessionStatus.RUNNING,
-      $limit: 1000,
-    },
-  })) as unknown as Paginated<Session>;
-  const orphanedSessions = orphanedSessionsResult.data;
+  // Find all orphaned sessions (RUNNING, STOPPING, AWAITING_PERMISSION, TIMED_OUT — all stuck after daemon restart)
+  const orphanedSessions: Session[] = [];
+  for (const status of [
+    SessionStatus.RUNNING,
+    SessionStatus.STOPPING,
+    SessionStatus.AWAITING_PERMISSION,
+    SessionStatus.TIMED_OUT,
+  ]) {
+    const result = (await sessionsService.find({
+      query: { status, $limit: 1000 },
+    })) as unknown as Paginated<Session>;
+    orphanedSessions.push(...result.data);
+  }
 
   if (orphanedSessions.length > 0) {
-    console.log(`   Found ${orphanedSessions.length} orphaned session(s) with RUNNING status`);
+    console.log(`   Found ${orphanedSessions.length} orphaned session(s)`);
     for (const session of orphanedSessions) {
       // IMPORTANT: Use app.service() instead of sessionsService to go through
       // FeathersJS service layer and trigger app.publish() for WebSocket events
-      // For internal/system operations, pass empty params object
       await app.service('sessions').patch(
         session.session_id,
         {
           status: SessionStatus.IDLE,
-          ready_for_prompt: true, // Set atomically with status
+          ready_for_prompt: true,
         },
         {}
       );
@@ -5486,8 +6140,7 @@ async function main() {
     }
   }
 
-  // Also check for sessions that had orphaned tasks (even if session status wasn't RUNNING)
-  // This handles cases where task was stuck but session status wasn't updated
+  // Also check for sessions that had orphaned tasks (even if session wasn't in RUNNING/STOPPING)
   const sessionIdsWithOrphanedTasks = new Set(
     orphanedTasks.map((t: Task) => t.session_id as string)
   );
@@ -5497,21 +6150,23 @@ async function main() {
     );
     for (const sessionId of sessionIdsWithOrphanedTasks) {
       const session = await sessionsService.get(sessionId as Id);
-      // If session is still marked as RUNNING after orphaned task cleanup, set to IDLE
-      if (session.status === SessionStatus.RUNNING) {
-        // IMPORTANT: Use app.service() instead of sessionsService to go through
-        // FeathersJS service layer and trigger app.publish() for WebSocket events
-        // For internal/system operations, pass empty params object
+      // If session is still in an active state after orphaned task cleanup, set to IDLE
+      if (
+        session.status === SessionStatus.RUNNING ||
+        session.status === SessionStatus.STOPPING ||
+        session.status === SessionStatus.AWAITING_PERMISSION ||
+        session.status === SessionStatus.TIMED_OUT
+      ) {
         await app.service('sessions').patch(
           sessionId as Id,
           {
             status: SessionStatus.IDLE,
-            ready_for_prompt: true, // Set atomically with status
+            ready_for_prompt: true,
           },
           {}
         );
         console.log(
-          `   ✓ Marked session ${sessionId.substring(0, 8)} as idle (had orphaned tasks)`
+          `   ✓ Marked session ${sessionId.substring(0, 8)} as idle (had orphaned tasks, was: ${session.status})`
         );
       }
     }

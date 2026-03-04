@@ -9,6 +9,8 @@
  * - ✅ Send prompts and receive responses
  * - ✅ Get session metadata and messages
  * - ✅ Real-time streaming support via SSE
+ * - ✅ Agor MCP tools (via client.mcp.add())
+ * - ✅ Worktree directory isolation (via x-opencode-directory header)
  * - ⏳ Session import (future: when OpenCode provides export API)
  */
 
@@ -16,6 +18,11 @@ import { generateId } from '@agor/core';
 import type { Message, MessageID, SessionID, TaskID } from '@agor/core/types';
 import { MessageRole } from '@agor/core/types';
 import { createOpencodeClient } from '@opencode-ai/sdk';
+import { getDaemonUrl } from '../../config.js';
+import type {
+  MCPServerRepository,
+  SessionMCPServerRepository,
+} from '../../db/feathers-repositories.js';
 import type { NormalizedSdkResponse, RawSdkResponse } from '../../types/sdk-response.js';
 import type {
   CreateSessionConfig,
@@ -25,6 +32,7 @@ import type {
   TaskResult,
   ToolCapabilities,
 } from '../base/index.js';
+import { getMcpServersForSession } from '../base/mcp-scoping.js';
 import type { ITool } from '../base/tool.interface.js';
 
 export interface OpenCodeConfig {
@@ -39,6 +47,10 @@ interface SessionContext {
   opencodeSessionId: string;
   model?: string;
   provider?: string;
+  /** Worktree directory path for project-scoped operations */
+  worktreePath?: string;
+  /** MCP token for Agor MCP server injection */
+  mcpToken?: string;
 }
 
 /**
@@ -59,35 +71,56 @@ export class OpenCodeTool implements ITool {
   readonly toolType = 'opencode' as const;
   readonly name = 'OpenCode';
 
+  /** Default client (no directory override) */
   private client: ReturnType<typeof createOpencodeClient> | null = null;
+  /** Directory-scoped clients keyed by worktree path */
+  private directoryClients: Map<string, ReturnType<typeof createOpencodeClient>> = new Map();
   private config: OpenCodeConfig;
   private messagesService?: MessagesService;
   private sessionContexts: Map<string, SessionContext> = new Map(); // Agor session ID → session context
+  /** Tracks which sessions have had MCP servers injected (hash-based) */
+  private injectedMcpHash: Map<string, string> = new Map();
+  /** MCP repository dependencies for resolving user-defined MCP servers */
+  private sessionMCPRepo?: SessionMCPServerRepository;
+  private mcpServerRepo?: MCPServerRepository;
 
-  constructor(config: OpenCodeConfig, messagesService?: MessagesService) {
+  constructor(
+    config: OpenCodeConfig,
+    messagesService?: MessagesService,
+    sessionMCPRepo?: SessionMCPServerRepository,
+    mcpServerRepo?: MCPServerRepository
+  ) {
     this.config = config;
     this.messagesService = messagesService;
+    this.sessionMCPRepo = sessionMCPRepo;
+    this.mcpServerRepo = mcpServerRepo;
   }
 
   /**
-   * Set session context (OpenCode session ID, model, and provider) for an Agor session
+   * Set session context (OpenCode session ID, model, provider, worktree path, and MCP token) for an Agor session
    * Must be called before executeTask
    *
    * @param agorSessionId - Agor session ID
    * @param opencodeSessionId - OpenCode session ID
    * @param model - Model identifier (e.g., 'gpt-4o', 'claude-sonnet-4-5')
    * @param provider - Provider ID (e.g., 'openai', 'opencode'). If omitted, uses legacy mapping.
+   * @param worktreePath - Worktree directory path for project-scoped operations
+   * @param mcpToken - MCP token for Agor MCP server injection
    */
   setSessionContext(
     agorSessionId: string,
     opencodeSessionId: string,
     model?: string,
-    provider?: string
+    provider?: string,
+    worktreePath?: string,
+    mcpToken?: string
   ): void {
     this.sessionContexts.set(agorSessionId, {
       opencodeSessionId,
       model,
       provider,
+      worktreePath,
+      mcpToken,
     });
   }
 
@@ -99,15 +132,142 @@ export class OpenCodeTool implements ITool {
   }
 
   /**
-   * Initialize the SDK client if not already initialized
+   * Get a client for the default (no directory override) connection.
+   * Backward-compatible wrapper around getClientForDirectory.
    */
   private getClient(): ReturnType<typeof createOpencodeClient> {
-    if (!this.client) {
-      this.client = createOpencodeClient({
-        baseUrl: this.config.serverUrl,
-      });
+    return this.getClientForDirectory(undefined);
+  }
+
+  /**
+   * Get or create a directory-scoped client.
+   * If no directory is provided, returns the default client (lazy-initialized).
+   * If a directory is provided, returns a cached client scoped to that directory.
+   */
+  private getClientForDirectory(
+    directory: string | undefined
+  ): ReturnType<typeof createOpencodeClient> {
+    if (!directory) {
+      if (!this.client) {
+        this.client = createOpencodeClient({
+          baseUrl: this.config.serverUrl,
+        });
+      }
+      return this.client;
     }
-    return this.client;
+
+    const cached = this.directoryClients.get(directory);
+    if (cached) {
+      return cached;
+    }
+
+    const client = createOpencodeClient({
+      baseUrl: this.config.serverUrl,
+      directory,
+    });
+    this.directoryClients.set(directory, client);
+    return client;
+  }
+
+  /**
+   * Inject MCP servers into OpenCode for the given session.
+   *
+   * Strategy: Use a session-specific MCP name (`agor_<shortId>`) to avoid conflicts with
+   * stale entries that may be cached in OpenCode's memory from previous sessions.
+   * The handler clears the `mcp` section in opencode.json to prevent stale entries from
+   * being loaded at server startup, and we inject fresh entries via mcp.add() each time.
+   *
+   * For user-defined MCP servers: uses a hash to avoid redundant re-injection.
+   */
+  private async ensureMcpServers(
+    sessionId: string,
+    client: ReturnType<typeof createOpencodeClient>,
+    mcpToken?: string,
+    worktreePath?: string
+  ): Promise<void> {
+    if (mcpToken) {
+      // Use session-specific MCP name to avoid conflicts with stale entries
+      const shortId = sessionId.substring(0, 8);
+      const mcpName = `agor_${shortId}`;
+
+      try {
+        const daemonUrl = await getDaemonUrl();
+        const mcpUrl = `${daemonUrl}/mcp?sessionToken=${encodeURIComponent(mcpToken)}`;
+
+        await client.mcp.add({
+          body: {
+            name: mcpName,
+            config: {
+              type: 'remote' as const,
+              url: mcpUrl,
+              enabled: true,
+            },
+          },
+          query: worktreePath ? { directory: worktreePath } : undefined,
+        });
+        console.log(`[OpenCodeTool] Injected Agor MCP as "${mcpName}" for session ${shortId}`);
+      } catch (error) {
+        console.warn(`[OpenCodeTool] Failed to inject Agor MCP server "${mcpName}":`, error);
+      }
+    }
+
+    // Inject user-defined MCP servers (use hash to avoid redundant re-injection)
+    const configHash = `${mcpToken ?? ''}:${sessionId}`;
+    if (this.injectedMcpHash.get(sessionId) === configHash) {
+      return;
+    }
+
+    if (this.sessionMCPRepo && this.mcpServerRepo) {
+      try {
+        const servers = await getMcpServersForSession(sessionId as SessionID, {
+          sessionMCPRepo: this.sessionMCPRepo,
+          mcpServerRepo: this.mcpServerRepo,
+        });
+
+        for (const { server } of servers) {
+          const sanitizedName = server.name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+
+          try {
+            if (server.transport === 'stdio') {
+              await client.mcp.add({
+                body: {
+                  name: sanitizedName,
+                  config: {
+                    type: 'local' as const,
+                    command: [server.command!, ...(server.args || [])],
+                    environment: (server.env as Record<string, string>) ?? {},
+                    enabled: true,
+                  },
+                },
+              });
+            } else if (server.transport === 'http' || server.transport === 'sse') {
+              const headers: Record<string, string> = {};
+              if (server.auth?.token) {
+                headers.Authorization = `Bearer ${server.auth.token}`;
+              }
+              await client.mcp.add({
+                body: {
+                  name: sanitizedName,
+                  config: {
+                    type: 'remote' as const,
+                    url: server.url!,
+                    enabled: true,
+                    headers: Object.keys(headers).length > 0 ? headers : undefined,
+                  },
+                },
+              });
+            }
+            console.log(`[OpenCodeTool] Injected MCP server: ${sanitizedName}`);
+          } catch (error) {
+            console.warn(`[OpenCodeTool] Failed to inject MCP server "${sanitizedName}":`, error);
+          }
+        }
+      } catch (error) {
+        console.warn('[OpenCodeTool] Failed to resolve MCP servers for session:', error);
+      }
+    }
+
+    this.injectedMcpHash.set(sessionId, configHash);
   }
 
   /**
@@ -119,7 +279,7 @@ export class OpenCodeTool implements ITool {
       supportsSessionCreate: true,
       supportsLiveExecution: true,
       supportsSessionFork: false, // Not currently supported
-      supportsChildSpawn: false, // Not currently supported
+      supportsChildSpawn: true, // Supported via Agor MCP tools
       supportsGitState: false, // OpenCode doesn't track git state
       supportsStreaming: true, // Supports SSE streaming
     };
@@ -143,7 +303,8 @@ export class OpenCodeTool implements ITool {
    * Create a new OpenCode session
    */
   async createSession?(config: CreateSessionConfig): Promise<SessionHandle> {
-    const client = this.getClient();
+    // Use directory-scoped client if workingDirectory is provided (worktree path)
+    const client = this.getClientForDirectory(config.workingDirectory);
 
     try {
       // Note: OpenCode SDK session.create doesn't support model parameter
@@ -191,8 +352,6 @@ export class OpenCodeTool implements ITool {
     streamingCallbacks?: StreamingCallbacks,
     messageIndex?: number
   ): Promise<TaskResult> {
-    const client = this.getClient();
-
     try {
       // Get session context (OpenCode session ID, model, provider)
       const context = this.getSessionContext(sessionId);
@@ -204,6 +363,7 @@ export class OpenCodeTool implements ITool {
         promptLength: prompt.length,
         model: context?.model,
         provider: context?.provider,
+        worktreePath: context?.worktreePath,
         streaming: !!streamingCallbacks,
       });
 
@@ -220,6 +380,13 @@ export class OpenCodeTool implements ITool {
       if (context.provider) {
         console.log('[OpenCodeTool] Using provider:', context.provider);
       }
+
+      // Get the directory-scoped client
+      const worktreePath = context.worktreePath;
+      const client = this.getClientForDirectory(worktreePath);
+
+      // Inject MCP servers (uses session-specific name to avoid stale entry conflicts)
+      await this.ensureMcpServers(sessionId, client, context.mcpToken, worktreePath);
 
       // Prepare prompt options
       const promptOptions: {
@@ -296,14 +463,45 @@ export class OpenCodeTool implements ITool {
         console.log('[OpenCodeTool] Listening for events...');
 
         for await (const event of eventStream.stream) {
-          // Log EVERY event for debugging
-          console.log('[OpenCodeTool] ========== RAW EVENT ==========');
-          console.log('[OpenCodeTool] Event type:', event.type);
-          console.log('[OpenCodeTool] Event data:', JSON.stringify(event, null, 2));
-          console.log('[OpenCodeTool] ================================');
+          // Log event type (skip noisy heartbeats)
+          const eventType = event.type as string;
+          if (eventType !== 'server.heartbeat') {
+            console.log('[OpenCodeTool] Event:', eventType);
+          }
 
           // Check if this event is for our session
           if ('properties' in event) {
+            // Handle permission.asked / permission.updated events BEFORE processing messages.
+            // When OpenCode needs permission (e.g., external_directory access), it emits this
+            // event and waits for a response. Without auto-granting, the session hangs forever.
+            if (
+              (eventType === 'permission.asked' || eventType === 'permission.updated') &&
+              'id' in event.properties &&
+              'sessionID' in event.properties &&
+              event.properties.sessionID === context.opencodeSessionId
+            ) {
+              const permId = event.properties.id as string;
+              const permType = (
+                'type' in event.properties ? event.properties.type : 'unknown'
+              ) as string;
+              console.log(
+                `[OpenCodeTool] Auto-granting permission: id=${permId}, type=${permType}`
+              );
+              try {
+                await client.postSessionIdPermissionsPermissionId({
+                  path: {
+                    id: context.opencodeSessionId,
+                    permissionID: permId,
+                  },
+                  body: { response: 'always' },
+                });
+                console.log(`[OpenCodeTool] Permission auto-granted (always): id=${permId}`);
+              } catch (permErr) {
+                console.error('[OpenCodeTool] Failed to auto-grant permission:', permErr);
+              }
+              continue;
+            }
+
             // First, identify the assistant message when it's created
             if (
               event.type === 'message.updated' &&
@@ -347,7 +545,6 @@ export class OpenCodeTool implements ITool {
 
               // OpenCode sends full text each time, not deltas
               // We need to calculate the delta ourselves
-              // biome-ignore lint/suspicious/noExplicitAny: Part types vary, text field is runtime checked
               const newText =
                 // biome-ignore lint/suspicious/noExplicitAny: Part types vary, text field is runtime checked
                 'text' in part && typeof (part as any).text === 'string'
@@ -420,7 +617,6 @@ export class OpenCodeTool implements ITool {
             }
 
             // Check for session idle status - indicates response is complete
-            // biome-ignore lint/suspicious/noExplicitAny: Event types incomplete, runtime check needed
             if (
               // biome-ignore lint/suspicious/noExplicitAny: Event types incomplete, runtime check needed
               (event as any).type === 'session.status' &&
@@ -452,7 +648,6 @@ export class OpenCodeTool implements ITool {
       console.log('[OpenCodeTool] ===================================');
 
       // Check for error in response
-      // biome-ignore lint/suspicious/noExplicitAny: Response structure varies, runtime check needed
       let hasError = false;
       let errorMessage = '';
       // biome-ignore lint/suspicious/noExplicitAny: Response structure varies, runtime check needed

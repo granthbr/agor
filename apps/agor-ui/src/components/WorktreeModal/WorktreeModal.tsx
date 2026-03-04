@@ -8,13 +8,16 @@ import type {
   User,
   Worktree,
 } from '@agor/core/types';
-import { Modal, Tabs } from 'antd';
-import { useState } from 'react';
+import { getAssistantConfig, isAssistant } from '@agor/core/types';
+import { Badge, Modal, Tabs, theme } from 'antd';
+import { useMemo, useState } from 'react';
 import { mapToArray } from '@/utils/mapHelpers';
+import { AssistantTab } from './tabs/AssistantTab';
 import { EnvironmentTab } from './tabs/EnvironmentTab';
 import { FilesTab } from './tabs/FilesTab';
 import { GeneralTab, type WorktreeUpdate } from './tabs/GeneralTab';
 import { ScheduleTab } from './tabs/ScheduleTab';
+import { SessionsTab } from './tabs/SessionsTab';
 
 export interface WorktreeModalProps {
   open: boolean;
@@ -37,6 +40,7 @@ export interface WorktreeModalProps {
     }
   ) => void;
   onOpenSettings?: () => void; // Navigate to Settings → Repositories
+  onSessionClick?: (sessionId: string) => void;
 }
 
 export const WorktreeModal: React.FC<WorktreeModalProps> = ({
@@ -54,77 +58,124 @@ export const WorktreeModal: React.FC<WorktreeModalProps> = ({
   onUpdateRepo,
   onArchiveOrDelete,
   onOpenSettings,
+  onSessionClick,
 }) => {
+  const { token } = theme.useToken();
   const [activeTab, setActiveTab] = useState('general');
+
+  const isAnAssistant = worktree ? isAssistant(worktree) : false;
+  const assistantConfig = useMemo(
+    () => (worktree ? getAssistantConfig(worktree) : null),
+    [worktree]
+  );
 
   if (!worktree || !repo) {
     return null;
   }
 
+  const title = isAnAssistant
+    ? `Assistant: ${assistantConfig?.displayName ?? worktree.name}`
+    : `Worktree: ${worktree.name}`;
+
+  const tabItems = [
+    // Assistant tab — only for assistants, shown first
+    ...(isAnAssistant
+      ? [
+          {
+            key: 'assistant',
+            label: 'Assistant',
+            children: (
+              <AssistantTab worktree={worktree} onUpdate={onUpdateWorktree} onClose={onClose} />
+            ),
+          },
+        ]
+      : []),
+    {
+      key: 'general',
+      label: 'General',
+      children: (
+        <GeneralTab
+          worktree={worktree}
+          repo={repo}
+          sessions={sessions}
+          boards={mapToArray(boardById)}
+          client={client}
+          currentUser={currentUser}
+          onUpdate={onUpdateWorktree}
+          onArchiveOrDelete={onArchiveOrDelete}
+          onClose={onClose}
+        />
+      ),
+    },
+    {
+      key: 'sessions',
+      label: (
+        <span>
+          Sessions{' '}
+          <Badge
+            count={sessions.length}
+            showZero
+            size="small"
+            style={{ backgroundColor: token.colorPrimaryBgHover }}
+          />
+        </span>
+      ),
+      children: (
+        <SessionsTab
+          worktree={worktree}
+          sessions={sessions}
+          client={client}
+          onSessionClick={(sessionId) => {
+            onSessionClick?.(sessionId);
+            onClose();
+          }}
+        />
+      ),
+    },
+    {
+      key: 'environment',
+      label: 'Environment',
+      children: (
+        <EnvironmentTab
+          worktree={worktree}
+          repo={repo}
+          client={client}
+          onUpdateRepo={onUpdateRepo}
+          onUpdateWorktree={onUpdateWorktree}
+        />
+      ),
+    },
+    {
+      key: 'files',
+      label: 'Files',
+      children: <FilesTab worktree={worktree} client={client} />,
+    },
+    {
+      key: 'schedule',
+      label: 'Schedule',
+      children: (
+        <ScheduleTab
+          worktree={worktree}
+          mcpServerById={mcpServerById}
+          onUpdate={onUpdateWorktree}
+        />
+      ),
+    },
+  ];
+
   return (
     <Modal
-      title={`Worktree: ${worktree.name}`}
+      title={title}
       open={open}
       onCancel={onClose}
       footer={null}
       width={900}
-      maskClosable={false}
+      mask={{ closable: false }}
       styles={{
         body: { padding: 0, maxHeight: '80vh', overflowY: 'auto' },
       }}
     >
-      <Tabs
-        activeKey={activeTab}
-        onChange={setActiveTab}
-        items={[
-          {
-            key: 'general',
-            label: 'General',
-            children: (
-              <GeneralTab
-                worktree={worktree}
-                repo={repo}
-                sessions={sessions}
-                boards={mapToArray(boardById)}
-                client={client}
-                currentUser={currentUser}
-                onUpdate={onUpdateWorktree}
-                onArchiveOrDelete={onArchiveOrDelete}
-                onClose={onClose}
-              />
-            ),
-          },
-          {
-            key: 'environment',
-            label: 'Environment',
-            children: (
-              <EnvironmentTab
-                worktree={worktree}
-                repo={repo}
-                client={client}
-                onUpdateRepo={onUpdateRepo}
-                onUpdateWorktree={onUpdateWorktree}
-              />
-            ),
-          },
-          {
-            key: 'files',
-            label: 'Files',
-            children: <FilesTab worktree={worktree} client={client} />,
-          },
-          {
-            key: 'schedule',
-            label: 'Schedule',
-            children: (
-              <ScheduleTab
-                worktree={worktree}
-                mcpServerById={mcpServerById}
-                onUpdate={onUpdateWorktree}
-              />
-            ),
-          },
-        ]}
-      />
+      <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
     </Modal>
   );
 };

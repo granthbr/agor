@@ -32,6 +32,7 @@ import type {
   RepoEnvironmentConfig,
   RepoSlug,
   UserID,
+  UUID,
   Worktree,
 } from '@agor/core/types';
 import { DrizzleService } from '../adapters/drizzle';
@@ -328,6 +329,16 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
       remote_url: repo.remote_url,
     });
 
+    // Check for duplicate worktree name in this repo (non-archived only)
+    const worktreeRepo = new WorktreeRepository(this.db);
+    const existingWorktree = await worktreeRepo.findActiveByRepoAndName(
+      repo.repo_id as UUID,
+      data.name
+    );
+    if (existingWorktree) {
+      throw new Error(`A worktree named '${data.name}' already exists in this repository`);
+    }
+
     const worktreePath = getWorktreePath(repo.slug, data.name);
 
     console.log('🔍 RepoService.createWorktree - computed paths:', {
@@ -465,6 +476,7 @@ export class ReposService extends DrizzleService<Repo, Partial<Repo>, RepoParams
             branch: data.ref,
             sourceBranch: data.sourceBranch,
             createBranch: data.createBranch,
+            refType: data.refType,
             // Unix group isolation (only when RBAC is enabled)
             initUnixGroup: rbacEnabled,
             othersAccess: worktree.others_fs_access || 'read', // Default to read access

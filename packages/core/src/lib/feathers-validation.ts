@@ -32,7 +32,9 @@ export const CommonSchemas = {
   sessionStatus: Type.Union([
     Type.Literal('idle'),
     Type.Literal('running'),
+    Type.Literal('stopping'),
     Type.Literal('awaiting_permission'),
+    Type.Literal('timed_out'),
     Type.Literal('completed'),
     Type.Literal('failed'),
   ]),
@@ -120,7 +122,9 @@ export const taskQuerySchema = createQuerySchema(
       Type.Union([
         Type.Literal('pending'),
         Type.Literal('running'),
+        Type.Literal('stopping'),
         Type.Literal('awaiting_permission'),
+        Type.Literal('timed_out'),
         Type.Literal('completed'),
         Type.Literal('failed'),
         Type.Literal('stopped'),

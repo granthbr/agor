@@ -29,7 +29,7 @@ import {
 } from '@ant-design/icons';
 import { Button, Input, Modal, Popover, Slider, Tooltip, Typography, theme } from 'antd';
 import Handlebars from 'handlebars';
-import {
+import React, {
   forwardRef,
   useCallback,
   useEffect,
@@ -144,8 +144,8 @@ interface SessionNodeData {
   zoneColor?: string;
 }
 
-// Custom node component that renders SessionCard
-const SessionNode = ({ data }: { data: SessionNodeData }) => {
+// Custom node component that renders SessionCard (memoized to prevent re-renders on unrelated node changes)
+const SessionNode = React.memo(({ data }: { data: SessionNodeData }) => {
   return (
     <div className="session-node">
       <SessionCard
@@ -164,7 +164,7 @@ const SessionNode = ({ data }: { data: SessionNodeData }) => {
       />
     </div>
   );
-};
+});
 
 interface WorktreeNodeData {
   worktree: Worktree;
@@ -199,8 +199,8 @@ interface WorktreeNodeData {
   client: AgorClient | null;
 }
 
-// Custom node component that renders WorktreeCard
-const WorktreeNode = ({ data }: { data: WorktreeNodeData }) => {
+// Custom node component that renders WorktreeCard (memoized to prevent re-renders on unrelated node changes)
+const WorktreeNode = React.memo(({ data }: { data: WorktreeNodeData }) => {
   return (
     <div className="worktree-node">
       <WorktreeCard
@@ -230,7 +230,7 @@ const WorktreeNode = ({ data }: { data: WorktreeNodeData }) => {
       />
     </div>
   );
-};
+});
 
 // Define nodeTypes outside component to avoid recreation on every render
 const nodeTypes = {
@@ -897,6 +897,36 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
       });
     }, [initialNodes, setNodes]);
 
+    // Memoized MiniMap nodeColor callback to prevent MiniMap canvas repaints on every render
+    const miniMapNodeColor = useCallback(
+      (node: Node) => {
+        if (node.type === 'cursor') return token.colorWarning;
+        if (node.type === 'comment') return token.colorText;
+        if (node.type === 'markdown') return `${token.colorText}B3`;
+        if (node.type === 'zone') return `${token.colorText}66`;
+        const session = node.data.session as Session;
+        if (!session) return token.colorPrimaryBorder;
+        switch (session.status) {
+          case 'running':
+            return token.colorPrimary;
+          case 'completed':
+            return token.colorSuccess;
+          case 'failed':
+            return token.colorError;
+          default:
+            return token.colorPrimaryBorder;
+        }
+      },
+      [
+        token.colorWarning,
+        token.colorText,
+        token.colorPrimaryBorder,
+        token.colorPrimary,
+        token.colorSuccess,
+        token.colorError,
+      ]
+    );
+
     // Helper: Partition nodes by type
     const partitionNodesByType = useCallback((nodes: Node[]) => {
       return {
@@ -945,15 +975,19 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
       });
     }, [getBoardObjectNodes, setNodes, applyZOrder, partitionNodesByType]);
 
-    // Sync CURSOR nodes separately
+    // Sync CURSOR nodes separately - optimized to avoid re-partitioning all nodes
     useEffect(() => {
       if (isDraggingRef.current) return;
 
       setNodes((currentNodes) => {
-        const { zones, markdown, worktrees, comments } = partitionNodesByType(currentNodes);
-        return applyZOrder(zones, markdown, worktrees, comments, cursorNodes);
+        // Remove old cursor nodes and append new ones (cursors are always last for z-order)
+        const nonCursorNodes = currentNodes.filter((n) => n.type !== 'cursor');
+        if (cursorNodes.length === 0 && nonCursorNodes.length === currentNodes.length) {
+          return currentNodes; // No change needed - avoid creating new array
+        }
+        return [...nonCursorNodes, ...cursorNodes];
       });
-    }, [cursorNodes, setNodes, applyZOrder, partitionNodesByType]);
+    }, [cursorNodes, setNodes]);
 
     // Sync COMMENT nodes separately
     useEffect(() => {
@@ -1344,6 +1378,7 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
                           // Send prompt to new session
                           await client.service(`sessions/${newSession.session_id}/prompt`).create({
                             prompt: renderedPrompt,
+                            messageSource: 'agor',
                           });
                         } catch (error) {
                           console.error('❌ Failed to execute always_new trigger:', error);
@@ -1972,134 +2007,124 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
             >
               {/* Zoom controls */}
               <Tooltip title="Zoom In" placement="right" mouseEnterDelay={0.3}>
-                <ControlButton
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    reactFlowInstanceRef.current?.zoomIn();
-                  }}
-                >
-                  <PlusOutlined style={{ fontSize: '16px' }} />
-                </ControlButton>
+                <span>
+                  <ControlButton
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      reactFlowInstanceRef.current?.zoomIn();
+                    }}
+                  >
+                    <PlusOutlined style={{ fontSize: '16px' }} />
+                  </ControlButton>
+                </span>
               </Tooltip>
               <Tooltip title="Zoom Out" placement="right" mouseEnterDelay={0.3}>
-                <ControlButton
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    reactFlowInstanceRef.current?.zoomOut();
-                  }}
-                >
-                  <MinusOutlined style={{ fontSize: '16px' }} />
-                </ControlButton>
+                <span>
+                  <ControlButton
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      reactFlowInstanceRef.current?.zoomOut();
+                    }}
+                  >
+                    <MinusOutlined style={{ fontSize: '16px' }} />
+                  </ControlButton>
+                </span>
               </Tooltip>
               <Tooltip title="Fit View" placement="right" mouseEnterDelay={0.3}>
-                <ControlButton
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    reactFlowInstanceRef.current?.fitView();
-                  }}
-                >
-                  <FullscreenOutlined style={{ fontSize: '16px' }} />
-                </ControlButton>
+                <span>
+                  <ControlButton
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      reactFlowInstanceRef.current?.fitView();
+                    }}
+                  >
+                    <FullscreenOutlined style={{ fontSize: '16px' }} />
+                  </ControlButton>
+                </span>
               </Tooltip>
               {/* Custom toolbox buttons */}
               <Tooltip title="Select" placement="right" mouseEnterDelay={0.3}>
-                <ControlButton
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setActiveTool('select');
-                  }}
-                  style={{
-                    borderLeft: activeTool === 'select' ? '3px solid #1677ff' : 'none',
-                  }}
-                >
-                  <SelectOutlined style={{ fontSize: '16px' }} />
-                </ControlButton>
+                <span>
+                  <ControlButton
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveTool('select');
+                    }}
+                    style={{
+                      borderLeft: activeTool === 'select' ? '3px solid #1677ff' : 'none',
+                    }}
+                  >
+                    <SelectOutlined style={{ fontSize: '16px' }} />
+                  </ControlButton>
+                </span>
               </Tooltip>
               <Tooltip title="Add Zone" placement="right" mouseEnterDelay={0.3}>
-                <ControlButton
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setActiveTool('zone');
-                  }}
-                  style={{
-                    borderLeft: activeTool === 'zone' ? '3px solid #1677ff' : 'none',
-                  }}
-                >
-                  <BorderOutlined style={{ fontSize: '16px' }} />
-                </ControlButton>
+                <span>
+                  <ControlButton
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveTool('zone');
+                    }}
+                    style={{
+                      borderLeft: activeTool === 'zone' ? '3px solid #1677ff' : 'none',
+                    }}
+                  >
+                    <BorderOutlined style={{ fontSize: '16px' }} />
+                  </ControlButton>
+                </span>
               </Tooltip>
               <Tooltip title="Add Comment" placement="right" mouseEnterDelay={0.3}>
-                <ControlButton
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setActiveTool('comment');
-                  }}
-                  style={{
-                    borderLeft: activeTool === 'comment' ? '3px solid #1677ff' : 'none',
-                  }}
-                >
-                  <CommentOutlined style={{ fontSize: '16px' }} />
-                </ControlButton>
+                <span>
+                  <ControlButton
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveTool('comment');
+                    }}
+                    style={{
+                      borderLeft: activeTool === 'comment' ? '3px solid #1677ff' : 'none',
+                    }}
+                  >
+                    <CommentOutlined style={{ fontSize: '16px' }} />
+                  </ControlButton>
+                </span>
               </Tooltip>
               <Tooltip title="Add Markdown Note" placement="right" mouseEnterDelay={0.3}>
-                <ControlButton
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setActiveTool('markdown');
-                  }}
-                  style={{
-                    borderLeft: activeTool === 'markdown' ? '3px solid #1677ff' : 'none',
-                  }}
-                >
-                  <FileMarkdownOutlined style={{ fontSize: '16px' }} />
-                </ControlButton>
+                <span>
+                  <ControlButton
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveTool('markdown');
+                    }}
+                    style={{
+                      borderLeft: activeTool === 'markdown' ? '3px solid #1677ff' : 'none',
+                    }}
+                  >
+                    <FileMarkdownOutlined style={{ fontSize: '16px' }} />
+                  </ControlButton>
+                </span>
               </Tooltip>
               <Tooltip title="Eraser - Click to toggle" placement="right" mouseEnterDelay={0.3}>
-                <ControlButton
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setActiveTool(activeTool === 'eraser' ? 'select' : 'eraser');
-                  }}
-                  style={{
-                    borderLeft: activeTool === 'eraser' ? `3px solid ${token.colorError}` : 'none',
-                    color: activeTool === 'eraser' ? token.colorError : 'inherit',
-                    backgroundColor:
-                      activeTool === 'eraser' ? `${token.colorError}15` : 'transparent',
-                  }}
-                >
-                  <DeleteOutlined style={{ fontSize: '16px' }} />
-                </ControlButton>
+                <span>
+                  <ControlButton
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveTool(activeTool === 'eraser' ? 'select' : 'eraser');
+                    }}
+                    style={{
+                      borderLeft:
+                        activeTool === 'eraser' ? `3px solid ${token.colorError}` : 'none',
+                      color: activeTool === 'eraser' ? token.colorError : 'inherit',
+                      backgroundColor:
+                        activeTool === 'eraser' ? `${token.colorError}15` : 'transparent',
+                    }}
+                  >
+                    <DeleteOutlined style={{ fontSize: '16px' }} />
+                  </ControlButton>
+                </span>
               </Tooltip>
             </Controls>
             <MiniMap
-              nodeColor={(node) => {
-                // Handle cursor nodes (show as bright color)
-                if (node.type === 'cursor') return token.colorWarning;
-
-                // Handle comment nodes - 100% alpha for top hierarchy
-                if (node.type === 'comment') return token.colorText;
-
-                // Handle markdown notes - 70% alpha for middle layer
-                if (node.type === 'markdown') return `${token.colorText}B3`;
-
-                // Handle board objects (zones) - 40% alpha for middle-low layer
-                if (node.type === 'zone') return `${token.colorText}66`;
-
-                // Handle session/worktree nodes - primary border color for middle-high layer
-                const session = node.data.session as Session;
-                if (!session) return token.colorPrimaryBorder;
-
-                switch (session.status) {
-                  case 'running':
-                    return token.colorPrimary;
-                  case 'completed':
-                    return token.colorSuccess;
-                  case 'failed':
-                    return token.colorError;
-                  default:
-                    return token.colorPrimaryBorder;
-                }
-              }}
+              nodeColor={miniMapNodeColor}
               pannable
               zoomable
               style={{
@@ -2297,6 +2322,7 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
                     // Send rendered prompt to session
                     await client.service(`sessions/${sessionId}/prompt`).create({
                       prompt: renderedPrompt,
+                      messageSource: 'agor',
                     });
                   } catch (error) {
                     console.error('❌ Failed to execute trigger:', error);
@@ -2484,6 +2510,7 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
                     await client.service(`sessions/${targetSessionId}/prompt`).create({
                       prompt: renderedTemplate,
                       permissionMode,
+                      messageSource: 'agor',
                     });
                     break;
                   }
@@ -2494,6 +2521,7 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
                     await client.service(`sessions/${forkedSession.session_id}/prompt`).create({
                       prompt: renderedTemplate,
                       permissionMode,
+                      messageSource: 'agor',
                     });
                     break;
                   }
@@ -2504,6 +2532,7 @@ const SessionCanvas = forwardRef<SessionCanvasRef, SessionCanvasProps>(
                     await client.service(`sessions/${spawnedSession.session_id}/prompt`).create({
                       prompt: renderedTemplate,
                       permissionMode,
+                      messageSource: 'agor',
                     });
                     break;
                   }

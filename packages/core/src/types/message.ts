@@ -22,6 +22,13 @@ export enum MessageRole {
 export type MessageStatus = 'queued' | null;
 
 /**
+ * Message source - where the message originated
+ * - 'gateway': Message came from external platform (Slack, Discord, etc.)
+ * - 'agor': Message originated from Agor UI
+ */
+export type MessageSource = 'gateway' | 'agor';
+
+/**
  * Message type (from Claude transcript)
  * Distinguishes conversation messages from meta/snapshot messages
  */
@@ -74,6 +81,7 @@ export enum PermissionStatus {
   PENDING = 'pending',
   APPROVED = 'approved',
   DENIED = 'denied',
+  TIMED_OUT = 'timed_out',
 }
 
 /**
@@ -161,6 +169,14 @@ export interface Message {
 
     /** Whether this is a meta/synthetic message */
     is_meta?: boolean;
+
+    /**
+     * Message source - where the message originated
+     * - 'gateway': Message came from external platform (Slack, Discord, etc.)
+     * - 'agor': Message originated from Agor UI
+     * - undefined: Legacy message or source not tracked
+     */
+    source?: MessageSource;
 
     /** Additional agent-specific fields */
     [key: string]: unknown;

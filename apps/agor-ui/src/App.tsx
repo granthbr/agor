@@ -15,7 +15,7 @@ import type {
   UUID,
   Worktree,
 } from '@agor/core/types';
-import { Alert, App as AntApp, ConfigProvider, Spin, theme } from 'antd';
+import { Alert, App as AntApp, ConfigProvider, Input, Modal, Spin, theme } from 'antd';
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AVAILABLE_AGENTS } from './components/AgentSelectionGrid';
@@ -23,6 +23,7 @@ import { App as AgorApp } from './components/App';
 import { ForcePasswordChangeModal } from './components/ForcePasswordChangeModal';
 import { LoginPage } from './components/LoginPage';
 import { MobileApp } from './components/mobile/MobileApp';
+import { OnboardingWizard } from './components/OnboardingWizard';
 import { SandboxBanner } from './components/SandboxBanner';
 import type { WorktreeUpdate } from './components/WorktreeModal/tabs/GeneralTab';
 import { ConnectionProvider } from './contexts/ConnectionContext';
@@ -38,6 +39,7 @@ import {
 import { StreamdownDemoPage } from './pages/StreamdownDemoPage';
 import { isMobileDevice } from './utils/deviceDetection';
 import { useThemedMessage } from './utils/message';
+import { buildOAuthAutoContinuePrompt, shouldProcessOAuthRequired } from './utils/oauth-helpers';
 
 /**
  * DeviceRouter - Redirects users to mobile or desktop site based on device detection
@@ -88,11 +90,13 @@ function AppContent() {
   const { token } = theme.useToken();
   const { getCurrentThemeConfig } = useTheme();
   const { showSuccess, showError, showLoading, destroy } = useThemedMessage();
+  const navigate = useNavigate();
 
   // Fetch daemon auth and instance configuration
   const {
     config: authConfig,
     instanceConfig,
+    onboardingConfig,
     loading: authConfigLoading,
     error: authConfigError,
   } = useAuthConfig();
@@ -106,6 +110,7 @@ function AppContent() {
     accessToken,
     login,
     logout,
+    reAuthenticate,
   } = useAuth();
 
   // Call ALL hooks unconditionally BEFORE any conditional returns
@@ -168,10 +173,203 @@ function AppContent() {
     }
   }, [loading, sessionById.size, boardById.size, repoById.size]);
 
+  // State for OAuth flow triggered by MCP tools
+  const [pendingOAuthServer, setPendingOAuthServer] = useState<{
+    serverId: string;
+    name: string;
+    url: string;
+    sessionId?: string;
+  } | null>(null);
+  const [oauthCallbackUrl, setOauthCallbackUrl] = useState('');
+  const [oauthFlowStarted, setOauthFlowStarted] = useState(false);
+  const [oauthCooldownUntil, setOauthCooldownUntil] = useState<number>(0);
+
+  // Listen for OAuth authentication required events from MCP tools
+  useEffect(() => {
+    if (!client?.io) return;
+
+    const handleOAuthRequired = (data: {
+      session_id: string;
+      servers: Array<{ name: string; serverId: string; url: string }>;
+    }) => {
+      console.log('[OAuth] Received oauth:auth_required event:', data);
+
+      const { shouldProcess, reason } = shouldProcessOAuthRequired(
+        pendingOAuthServer,
+        oauthCooldownUntil
+      );
+      if (!shouldProcess) {
+        console.log(`[OAuth] Ignoring - ${reason}`);
+        return;
+      }
+
+      // Start OAuth flow for the first server that needs it
+      if (data.servers.length > 0) {
+        const server = data.servers[0];
+        setPendingOAuthServer({ ...server, sessionId: data.session_id });
+        setOauthCallbackUrl('');
+        setOauthFlowStarted(false);
+      }
+    };
+
+    client.io.on('oauth:auth_required', handleOAuthRequired);
+
+    return () => {
+      client.io.off('oauth:auth_required', handleOAuthRequired);
+    };
+  }, [client, pendingOAuthServer, oauthCooldownUntil]);
+
+  // Auto-start OAuth flow when pendingOAuthServer is set
+  useEffect(() => {
+    if (!client || !pendingOAuthServer || oauthFlowStarted) return;
+
+    const startOAuthFlow = async () => {
+      setOauthFlowStarted(true);
+
+      // Set up listener for oauth:open_browser event
+      const handleOpenBrowser = ({ authUrl }: { authUrl: string }) => {
+        console.log('[OAuth] Opening browser for auth:', authUrl);
+        window.open(authUrl, '_blank', 'noopener,noreferrer');
+      };
+      client.io.on('oauth:open_browser', handleOpenBrowser);
+
+      try {
+        const mcpServer = mcpServerById.get(pendingOAuthServer.serverId);
+        const data = (await client.service('mcp-servers/oauth-start').create({
+          mcp_url: mcpServer?.url || pendingOAuthServer.url,
+          mcp_server_id: pendingOAuthServer.serverId,
+          client_id: mcpServer?.auth?.oauth_client_id,
+        })) as {
+          success: boolean;
+          error?: string;
+          authorizationUrl?: string;
+          state?: string;
+        };
+
+        if (!data.success) {
+          showError(data.error || 'Failed to start OAuth flow');
+          setPendingOAuthServer(null);
+        }
+        // If success, the modal will show for callback URL input
+      } catch (error) {
+        showError(`OAuth error: ${error instanceof Error ? error.message : String(error)}`);
+        setPendingOAuthServer(null);
+      } finally {
+        client.io.off('oauth:open_browser', handleOpenBrowser);
+      }
+    };
+
+    startOAuthFlow();
+  }, [client, pendingOAuthServer, oauthFlowStarted, mcpServerById, showError]);
+
+  // Handle OAuth callback URL submission
+  const handleOAuthCallbackSubmit = async () => {
+    if (!client || !oauthCallbackUrl.trim()) {
+      showError('Please paste the callback URL');
+      return;
+    }
+
+    try {
+      const data = (await client.service('mcp-servers/oauth-complete').create({
+        callback_url: oauthCallbackUrl.trim(),
+      })) as {
+        success: boolean;
+        error?: string;
+        message?: string;
+      };
+
+      if (data.success) {
+        showSuccess(
+          data.message || 'OAuth authentication successful! MCP tools are now available.'
+        );
+
+        // Auto-continue the session that was waiting for OAuth
+        const autoContinue = buildOAuthAutoContinuePrompt(pendingOAuthServer);
+        if (autoContinue) {
+          try {
+            await client.service(`sessions/${autoContinue.sessionId}/prompt`).create({
+              prompt: autoContinue.prompt,
+              messageSource: autoContinue.messageSource,
+            });
+          } catch (err) {
+            console.warn('[OAuth] Failed to auto-continue session:', err);
+          }
+        }
+
+        setPendingOAuthServer(null);
+        setOauthCallbackUrl('');
+        // Set 10 second cooldown to prevent immediate re-triggers
+        setOauthCooldownUntil(Date.now() + 10000);
+      } else {
+        showError(data.error || 'Failed to complete OAuth flow');
+      }
+    } catch (error) {
+      showError(`OAuth error: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
   // Get current user from users Map (real-time updates via WebSocket)
   // This ensures we get the latest onboarding_completed status
   // Fall back to user from auth if users Map hasn't loaded yet
   const currentUser = user ? userById.get(user.user_id) || user : null;
+
+  // Onboarding wizard state
+  const [onboardingWizardOpen, setOnboardingWizardOpen] = useState(false);
+
+  // Trigger wizard when user is loaded and hasn't completed onboarding
+  useEffect(() => {
+    if (
+      currentUser &&
+      currentUser.onboarding_completed === false &&
+      !currentUser.must_change_password &&
+      connected &&
+      !loading
+    ) {
+      setOnboardingWizardOpen(true);
+    }
+  }, [currentUser, connected, loading]);
+
+  // Handle wizard completion
+  const handleOnboardingComplete = async (result: {
+    worktreeId: string;
+    sessionId: string;
+    boardId: string;
+    path: 'assistant' | 'own-repo';
+  }) => {
+    setOnboardingWizardOpen(false);
+
+    if (!currentUser) return;
+
+    // Mark onboarding complete and store result in preferences
+    handleUpdateUser(currentUser.user_id, {
+      onboarding_completed: true,
+      preferences: {
+        ...currentUser.preferences,
+        mainBoardId: result.boardId || currentUser.preferences?.mainBoardId,
+        onboarding: {
+          path: result.path,
+          worktreeId: result.worktreeId,
+          boardId: result.boardId,
+        },
+      },
+    });
+
+    // Clear the assistant pending flag if applicable
+    if (result.path === 'assistant' && client) {
+      try {
+        await client.service('config').patch(null, { onboarding: { assistantPending: false } });
+      } catch {
+        // Non-critical — ignore
+      }
+    }
+
+    // Navigate to the user's board + session
+    if (result.boardId && result.sessionId) {
+      navigate(`/b/${result.boardId}/${result.sessionId}/`);
+    } else if (result.boardId) {
+      navigate(`/b/${result.boardId}/`);
+    }
+  };
 
   // NOW handle conditional rendering based on state
   // Show loading while fetching auth config
@@ -484,6 +682,7 @@ function AppContent() {
       await client.service(`sessions/${sessionId}/prompt`).create({
         prompt,
         permissionMode,
+        messageSource: 'agor',
       });
 
       // Clear the draft after sending
@@ -554,6 +753,9 @@ function AppContent() {
     // This will auto-clear must_change_password flag on the backend
     await client.service('users').patch(userId, { password: newPassword } as Partial<User>);
     showSuccess('Password changed successfully!');
+    // Re-authenticate to refresh user state with must_change_password: false
+    // This will dismiss the modal and allow the user to continue
+    await reAuthenticate();
   };
 
   // Handle board CRUD
@@ -1018,6 +1220,57 @@ function AppContent() {
         onChangePassword={handleForcePasswordChange}
         onLogout={logout}
       />
+
+      {/* OAuth Callback Modal - shown when MCP server needs OAuth authentication */}
+      <Modal
+        title={`OAuth Authentication - ${pendingOAuthServer?.name || 'MCP Server'}`}
+        open={!!pendingOAuthServer && oauthFlowStarted}
+        onOk={handleOAuthCallbackSubmit}
+        onCancel={() => {
+          setPendingOAuthServer(null);
+          setOauthCallbackUrl('');
+        }}
+        okText="Complete Authentication"
+        cancelText="Cancel"
+      >
+        <p>
+          A browser window has been opened for OAuth authentication. After you complete the login,
+          you will be redirected to a callback URL.
+        </p>
+        <p>
+          <strong>Please copy and paste the entire callback URL here:</strong>
+        </p>
+        <Input.TextArea
+          value={oauthCallbackUrl}
+          onChange={(e) => setOauthCallbackUrl(e.target.value)}
+          placeholder="Paste the callback URL here (e.g., http://localhost:3030/oauth/callback?code=...)"
+          rows={3}
+          style={{ marginTop: 8 }}
+        />
+      </Modal>
+
+      {/* Onboarding Wizard - shown for new users */}
+      <OnboardingWizard
+        open={onboardingWizardOpen}
+        onComplete={handleOnboardingComplete}
+        repoById={repoById}
+        worktreeById={worktreeById}
+        boardById={boardById}
+        user={currentUser}
+        client={client}
+        onCreateRepo={handleCreateRepo}
+        onCreateLocalRepo={handleCreateLocalRepo}
+        onCreateWorktree={handleCreateWorktree}
+        onCreateSession={handleCreateSession}
+        onUpdateUser={handleUpdateUser}
+        onUpdateWorktree={handleUpdateWorktree}
+        assistantPending={
+          onboardingConfig?.assistantPending ?? onboardingConfig?.persistedAgentPending
+        }
+        frameworkRepoUrl={onboardingConfig?.frameworkRepoUrl}
+        systemCredentials={onboardingConfig?.systemCredentials}
+      />
+
       <DeviceRouter />
       <Routes>
         {/* Demo route */}

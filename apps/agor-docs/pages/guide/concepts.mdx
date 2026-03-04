@@ -259,6 +259,18 @@ This lets you run multiple worktrees simultaneously without port conflicts. Star
 
 ---
 
+## 🤖 Assistants
+
+**An Assistant is a persistent AI companion that lives in your Agor workspace.**
+
+While a normal worktree is _where_ code gets written, an Assistant is a _who_ — a long-lived entity with memory, identity, skills, and the ability to orchestrate work across your entire workspace. Assistants maintain file-based memory across sessions, run on heartbeat schedules, and coordinate multi-agent workflows through Agor's MCP tools.
+
+Inspired by [OpenClaw](https://openclaw.ai/)'s agent loop architecture, Agor Assistants adapt the core patterns — markdown-based memory, identity files, scheduled loops — for team-based developer workflows with full visibility on spatial boards.
+
+**Learn more:** See the full [Assistants guide](/guide/assistants) for setup, key concepts (BOOTSTRAP.md, BOARD.md, HEARTBEAT.md, Skills), and real-world examples.
+
+---
+
 ## Summary
 
 - **Worktrees** = Isolated git working directories (1 worktree = 1 issue = 1 PR)
@@ -266,5 +278,6 @@ This lets you run multiple worktrees simultaneously without port conflicts. Star
 - **Zones** = Spatial triggers for templated prompts (Kanban-style workflow automation)
 - **Sessions** = AI conversations that can fork/spawn creating genealogy trees
 - **Environments** = Runtime instances with unique ports for each worktree
+- **Assistants** = Persistent AI companions with memory, orchestration, and scheduled heartbeats
 
 Together, these primitives make Agor a **multiplayer, spatial layer for AI coding** - connecting Claude Code, Codex, Gemini, and any agentic coding tool into one unified workspace.

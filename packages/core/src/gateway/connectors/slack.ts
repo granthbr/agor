@@ -5,7 +5,17 @@
  * inbound messages via Socket Mode.
  *
  * Config shape (stored encrypted in gateway_channels.config):
- *   { bot_token: string, app_token?: string, default_channel?: string }
+ *   {
+ *     bot_token: string,
+ *     app_token?: string,
+ *     default_channel?: string,
+ *     enable_channels?: boolean,                    // Listen in public channels
+ *     enable_groups?: boolean,                      // Listen in private channels
+ *     enable_mpim?: boolean,                        // Listen in group DMs
+ *     require_mention?: boolean,                    // Require @mention in channels
+ *     allow_thread_replies_without_mention?: boolean, // Allow thread replies without @mention (default: true)
+ *     allowed_channel_ids?: string[]                // Channel ID whitelist
+ *   }
  *
  * Thread ID format: "{channel_id}-{thread_ts}"
  *   e.g. "C07ABC123-1707340800.123456"
@@ -21,6 +31,17 @@ interface SlackConfig {
   bot_token: string;
   app_token?: string;
   default_channel?: string;
+
+  // Message source configuration
+  enable_channels?: boolean;
+  enable_groups?: boolean;
+  enable_mpim?: boolean;
+  require_mention?: boolean;
+  allow_thread_replies_without_mention?: boolean;
+  allowed_channel_ids?: string[];
+
+  // User alignment: resolve Slack user email → Agor user
+  align_slack_users?: boolean;
 }
 
 /**
@@ -51,6 +72,24 @@ function parseThreadId(threadId: string): { channel: string; thread_ts: string }
 }
 
 /**
+ * Check if a bot mention pattern appears *outside* code blocks in Slack message text.
+ *
+ * Slack sends `<@U12345>` in `event.text` regardless of whether the mention is
+ * inside a code block or not. However, `app_mention` events only fire for
+ * "active" mentions (outside code blocks). This function strips code blocks
+ * first, then tests for the mention pattern — so code-block mentions return false.
+ *
+ * Handles both triple-backtick blocks and inline backtick spans.
+ */
+function hasActiveMention(text: string, mentionPattern: RegExp): boolean {
+  // Strip triple-backtick blocks first (```...```), then inline code (`...`)
+  const stripped = text.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '');
+  // Reset lastIndex in case the pattern has global/sticky flags (defensive)
+  mentionPattern.lastIndex = 0;
+  return mentionPattern.test(stripped);
+}
+
+/**
  * Convert markdown to Slack mrkdwn format
  *
  * Handles basic conversions:
@@ -76,6 +115,12 @@ export class SlackConnector implements GatewayConnector {
   private web: WebClient;
   private socketMode: SocketModeClient | null = null;
   private config: SlackConfig;
+  private botUserId: string | null = null;
+
+  /** Cache: Slack user ID → email (or null if unavailable). */
+  private userEmailCache = new Map<string, { email: string | null; expiresAt: number }>();
+  private static USER_CACHE_TTL_MS = 15 * 60 * 1000; // 15 min for successful lookups
+  private static USER_CACHE_ERROR_TTL_MS = 60 * 1000; // 1 min for errors (transient recovery)
 
   constructor(config: Record<string, unknown>) {
     this.config = config as unknown as SlackConfig;
@@ -84,7 +129,62 @@ export class SlackConnector implements GatewayConnector {
       throw new Error('Slack connector requires bot_token in config');
     }
 
+    // Debug: Log token status (not the actual token!)
+    // Initialization - tokens validated during startListening
+
     this.web = new WebClient(this.config.bot_token);
+  }
+
+  /**
+   * Look up a Slack user's email address by their user ID.
+   *
+   * Caches successful results for 15 minutes and errors for 1 minute
+   * (so transient failures recover quickly). Evicts expired entries on
+   * each call to prevent unbounded cache growth.
+   *
+   * Returns null if the email is unavailable (missing users:read.email scope,
+   * bot user, restricted guest, or API error).
+   */
+  async lookupUserEmail(slackUserId: string): Promise<string | null> {
+    const now = Date.now();
+
+    // Evict expired entries to prevent unbounded growth
+    for (const [key, entry] of this.userEmailCache) {
+      if (entry.expiresAt <= now) this.userEmailCache.delete(key);
+    }
+
+    const cached = this.userEmailCache.get(slackUserId);
+    if (cached && cached.expiresAt > now) {
+      return cached.email;
+    }
+
+    try {
+      const result = await this.web.users.info({ user: slackUserId });
+      const email = result.user?.profile?.email ?? null;
+
+      this.userEmailCache.set(slackUserId, {
+        email,
+        expiresAt: now + SlackConnector.USER_CACHE_TTL_MS,
+      });
+
+      if (email) {
+        console.log(`[slack] Resolved user ${slackUserId} → ${email}`);
+      } else {
+        console.log(
+          `[slack] User ${slackUserId} has no email (missing users:read.email scope or restricted account)`
+        );
+      }
+
+      return email;
+    } catch (error) {
+      console.warn(`[slack] Failed to look up email for user ${slackUserId}:`, error);
+      // Short TTL for errors so transient failures (rate limits, network) recover quickly
+      this.userEmailCache.set(slackUserId, {
+        email: null,
+        expiresAt: now + SlackConnector.USER_CACHE_ERROR_TTL_MS,
+      });
+      return null;
+    }
   }
 
   /**
@@ -106,6 +206,7 @@ export class SlackConnector implements GatewayConnector {
     });
 
     if (!result.ok || !result.ts) {
+      console.error(`[slack] Message send failed: ${result.error}`);
       throw new Error(`Slack API error: ${result.error ?? 'unknown error'}`);
     }
 
@@ -115,36 +216,105 @@ export class SlackConnector implements GatewayConnector {
   /**
    * Start listening for inbound messages via Socket Mode
    *
-   * Requires app_token in config. Filters for messages that
-   * mention the bot or are direct messages.
+   * Requires app_token in config. Filters messages based on config:
+   * - Direct messages (always enabled)
+   * - Public channels (if enable_channels = true)
+   * - Private channels (if enable_groups = true)
+   * - Group DMs (if enable_mpim = true)
+   * - Mention requirement (if require_mention = true)
+   * - Channel whitelist (if allowed_channel_ids is set)
    */
   async startListening(callback: (msg: InboundMessage) => void): Promise<void> {
+    console.log('[slack] startListening called');
+
     if (!this.config.app_token) {
+      console.error('[slack] ERROR: app_token is missing from config');
       throw new Error('Slack Socket Mode requires app_token in config');
     }
 
+    console.log('[slack] Creating SocketModeClient...');
     this.socketMode = new SocketModeClient({
       appToken: this.config.app_token,
     });
 
-    // Debug: log all incoming Slack events
-    this.socketMode.on('slack_event', async ({ type, body, ack }) => {
-      console.log(`[slack] Received event type="${type}" subtype="${body?.event?.type}"`);
+    // Fetch bot user ID for mention detection
+    let botMentionPattern: RegExp | null = null;
+    let botMentionReplacePattern: RegExp | null = null;
+    try {
+      console.log('[slack] Testing bot token with auth.test()...');
+      const authTest = await this.web.auth.test();
+      this.botUserId = authTest.user_id as string;
+      // Precompile regex patterns for performance
+      botMentionPattern = new RegExp(`<@${this.botUserId}>`);
+      botMentionReplacePattern = new RegExp(`<@${this.botUserId}>\\s*`, 'g');
+      console.log(`[slack] Bot user ID: ${this.botUserId}`);
+      console.log(
+        `[slack] Bot auth test successful - team: ${authTest.team}, user: ${authTest.user}`
+      );
+    } catch (error) {
+      console.error('[slack] Failed to fetch bot user ID:', error);
+      console.error('[slack] This usually means the bot_token is invalid or expired');
+      console.warn('[slack] Mention detection will be disabled');
+    }
 
-      // Only handle events_api message events
-      if (type !== 'events_api' || body?.event?.type !== 'message') {
+    // Read config options (with defaults matching UI)
+    const enableChannels = this.config.enable_channels ?? false;
+    const enableGroups = this.config.enable_groups ?? false;
+    const enableMpim = this.config.enable_mpim ?? false;
+    const requireMention = this.config.require_mention ?? true;
+    // Default to true: once a user @mentions the bot to start a thread,
+    // they can continue the conversation without re-tagging. The gateway
+    // service's mapping verification prevents abuse in unmapped threads.
+    const allowThreadRepliesWithoutMention =
+      this.config.allow_thread_replies_without_mention ?? true;
+
+    // Normalize allowed_channel_ids to string[] (handle malformed config)
+    let allowedChannelIds: string[] | undefined;
+    if (this.config.allowed_channel_ids) {
+      if (Array.isArray(this.config.allowed_channel_ids)) {
+        allowedChannelIds = this.config.allowed_channel_ids.filter(
+          (id): id is string => typeof id === 'string'
+        );
+      } else if (typeof this.config.allowed_channel_ids === 'string') {
+        // Handle case where config was persisted as string instead of array
+        allowedChannelIds = [this.config.allowed_channel_ids];
+      } else {
+        console.warn(
+          '[slack] Invalid allowed_channel_ids config (not array or string). Ignoring whitelist.'
+        );
+        allowedChannelIds = undefined;
+      }
+    }
+
+    console.log('[slack] Message source config:', {
+      enableChannels,
+      enableGroups,
+      enableMpim,
+      requireMention,
+      allowedChannelIds: allowedChannelIds?.length || 0,
+    });
+
+    // Handle incoming Slack events
+    this.socketMode.on('slack_event', async ({ type, body, ack }) => {
+      // Event received - process based on type
+
+      // Handle both 'message' events (DMs, threads) and 'app_mention' events (channel mentions)
+      if (type !== 'events_api') {
+        await ack();
+        return;
+      }
+
+      const eventType = body?.event?.type;
+      if (eventType !== 'message' && eventType !== 'app_mention') {
         await ack();
         return;
       }
 
       await ack();
       const event = body.event;
-
-      // Only handle DMs (im) — skip public/private channel messages
-      if (event.channel_type && event.channel_type !== 'im') {
-        console.log(`[slack] Skipping non-DM message (channel_type=${event.channel_type})`);
-        return;
-      }
+      console.log(
+        `[slack] Processing ${eventType} event - channel: ${event.channel}, channel_type: ${event.channel_type}`
+      );
 
       // Skip bot messages to avoid loops
       if (event.bot_id || event.subtype === 'bot_message') {
@@ -153,9 +323,162 @@ export class SlackConnector implements GatewayConnector {
       }
 
       // Skip message edits, deletes, and other subtypes — only handle new messages
-      if (event.subtype) {
-        console.log(`[slack] Skipping message subtype="${event.subtype}"`);
+      // Note: app_mention events don't have subtypes
+      if (eventType === 'message' && event.subtype) {
         return;
+      }
+
+      // IMPORTANT: Prevent duplicate processing
+      // When a bot is mentioned, Slack sends BOTH 'app_mention' and 'message' events.
+      // This happens for top-level messages AND thread replies.
+      //
+      // Strategy:
+      // - Use 'app_mention' for active mentions outside code blocks
+      // - Use 'message' for DMs, non-mention messages, and code-block-only mentions
+      // - Skip 'message' events that have active mentions (to avoid duplicates)
+      // - Skip 'app_mention' events where the mention is only inside code blocks
+      //   (those are not "real" mentions and should be handled as plain messages)
+      const isThreadReply = !!event.thread_ts;
+      // Determine if this is a channel/group message for dedup purposes.
+      // app_mention events often lack channel_type, so infer from channel ID prefix.
+      // IMPORTANT: Only use prefix inference for app_mention events. For message events,
+      // rely on the explicit channel_type to avoid misclassifying MPIMs (which also
+      // use G* prefix) and accidentally dropping messages.
+      const channelPrefix = (event.channel as string | undefined)?.charAt(0);
+      const isChannelMessage =
+        event.channel_type === 'channel' ||
+        event.channel_type === 'group' ||
+        (eventType === 'app_mention' &&
+          !event.channel_type &&
+          (channelPrefix === 'C' || channelPrefix === 'G'));
+
+      // CRITICAL: Prevent duplicates in channels/groups when bot ID unavailable
+      // Strategy depends on require_mention setting:
+      // - If require_mention=true: prefer app_mention (Slack guarantees mention), skip message
+      // - If require_mention=false: prefer message (app_mention won't fire for non-mentions), skip app_mention
+      if (isChannelMessage && !botMentionPattern) {
+        if (eventType === 'message' && requireMention) {
+          // Can't detect mentions - let app_mention handle (which Slack guarantees is a mention)
+          console.warn(
+            '[slack] Bot ID unavailable, require_mention=true - skipping message event (will use app_mention)'
+          );
+          return;
+        }
+        if (eventType === 'app_mention' && !requireMention) {
+          // Avoid duplicates - prefer message events when mentions not required
+          console.warn(
+            '[slack] Bot ID unavailable, require_mention=false - skipping app_mention (will use message)'
+          );
+          return;
+        }
+      }
+
+      if (isChannelMessage && botMentionPattern) {
+        const mentionOutsideCodeBlock = hasActiveMention(event.text ?? '', botMentionPattern);
+
+        if (eventType === 'message' && mentionOutsideCodeBlock) {
+          // Active (non-code-block) mention detected in a message event.
+          // Skip — the parallel app_mention event will handle it.
+          return;
+        }
+
+        if (eventType === 'app_mention' && !mentionOutsideCodeBlock) {
+          // app_mention fired but the mention is only inside a code block.
+          // Skip — the parallel message event will handle it as a non-mention
+          // (correctly rejected or routed via thread reply exception).
+          return;
+        }
+      }
+
+      // Resolve channel type. app_mention events don't include channel_type,
+      // so infer it from the channel ID prefix when missing:
+      //   C = public channel, G = private channel/group DM, D = DM
+      let channelType: string | undefined = event.channel_type;
+      if (!channelType && event.channel) {
+        const prefix = (event.channel as string).charAt(0);
+        if (prefix === 'C') {
+          channelType = 'channel';
+        } else if (prefix === 'G') {
+          channelType = 'group';
+        } else if (prefix === 'D') {
+          channelType = 'im';
+        }
+      }
+
+      // Channel type filtering based on config
+      if (!channelType || channelType === 'im') {
+        // Direct messages are always allowed
+      } else if (channelType === 'channel' && !enableChannels) {
+        return; // Public channels not enabled
+      } else if (channelType === 'group' && !enableGroups) {
+        return; // Private channels not enabled
+      } else if (channelType === 'mpim' && !enableMpim) {
+        return; // Group DMs not enabled
+      } else if (
+        channelType !== 'im' &&
+        channelType !== 'channel' &&
+        channelType !== 'group' &&
+        channelType !== 'mpim'
+      ) {
+        console.warn(`[slack] Unknown channel_type="${channelType}"`);
+        return;
+      }
+
+      // Channel whitelist check (applies to all channel types)
+      if (allowedChannelIds && allowedChannelIds.length > 0) {
+        if (!allowedChannelIds.includes(event.channel)) {
+          return; // Not in whitelist
+        }
+      }
+
+      // Mention requirement handling
+      let messageText = event.text ?? '';
+      let hasMention = false;
+      let allowedViaThreadReplyException = false;
+
+      if (requireMention) {
+        if (!botMentionPattern || !botMentionReplacePattern) {
+          // app_mention events are inherently mentions (Slack guarantees this)
+          // Allow them even without bot ID pattern
+          if (eventType === 'app_mention') {
+            // Mention is implied by event type - allow without pattern validation
+            // We can't strip the mention without the pattern, but that's acceptable
+            // (messageText stays as-is since we don't have botMentionReplacePattern)
+            hasMention = true;
+          } else {
+            // SECURITY: Fail closed - if we can't verify mentions on message events, reject
+            console.warn(
+              '[slack] Cannot enforce mention requirement (bot user ID not available). Rejecting message event.'
+            );
+            return;
+          }
+        } else {
+          // Bot ID available - perform normal mention validation.
+          // Only count mentions outside code blocks as active mentions.
+          // Code-block mentions (e.g. `@bot`) are not "real" mentions and
+          // should not trigger a response.
+          hasMention = hasActiveMention(messageText, botMentionPattern);
+
+          if (!hasMention) {
+            // Check if this is a thread reply that's allowed without mention
+            if (isThreadReply && allowThreadRepliesWithoutMention) {
+              // Thread reply without mention - allow for conversation flow
+              // SECURITY: Gateway service verifies a mapping exists before creating sessions.
+              // Unmapped threads (where bot was never mentioned) will be rejected.
+              // Set allow_thread_replies_without_mention: true only if you want to allow
+              // continuing conversations in existing threads without requiring @mentions.
+              allowedViaThreadReplyException = true;
+            } else {
+              // Reject: top-level message or thread reply not allowed without mention
+              return;
+            }
+          }
+
+          // Strip mention if present
+          if (hasMention) {
+            messageText = messageText.replace(botMentionReplacePattern, '').trim();
+          }
+        }
       }
 
       const threadId = event.thread_ts
@@ -163,22 +486,36 @@ export class SlackConnector implements GatewayConnector {
         : `${event.channel}-${event.ts}`;
 
       console.log(
-        `[slack] Inbound message: thread=${threadId} user=${event.user} text="${event.text?.substring(0, 50)}"`
+        `[slack] Inbound message: thread=${threadId} channel_type=${channelType} user=${event.user}`
       );
+
+      // Resolve Slack user email if align_slack_users is enabled
+      let slackUserEmail: string | null = null;
+      if (this.config.align_slack_users && event.user) {
+        slackUserEmail = await this.lookupUserEmail(event.user);
+      }
 
       callback({
         threadId,
-        text: event.text ?? '',
+        text: messageText,
         userId: event.user ?? 'unknown',
         timestamp: event.ts ?? new Date().toISOString(),
         metadata: {
           channel: event.channel,
           channel_type: event.channel_type,
+          requires_mapping_verification: allowedViaThreadReplyException,
+          ...(slackUserEmail ? { slack_user_email: slackUserEmail } : {}),
+          // Signal that user alignment was attempted so the gateway can
+          // reject (instead of silently falling back to channel owner)
+          // when the email couldn't be resolved.
+          ...(this.config.align_slack_users ? { align_slack_users: true } : {}),
         },
       });
     });
 
+    console.log('[slack] Starting Socket Mode client...');
     await this.socketMode.start();
+    console.log('[slack] Socket Mode client connected successfully!');
   }
 
   /**

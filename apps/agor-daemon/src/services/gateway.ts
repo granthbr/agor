@@ -6,11 +6,23 @@
  * since it orchestrates across multiple repositories and services.
  */
 
-import { type Database, GatewayChannelRepository, ThreadSessionMapRepository } from '@agor/core/db';
+import {
+  type Database,
+  GatewayChannelRepository,
+  ThreadSessionMapRepository,
+  UsersRepository,
+} from '@agor/core/db';
 import type { Application } from '@agor/core/feathers';
 import type { GatewayConnector, InboundMessage } from '@agor/core/gateway';
 import { getConnector, hasConnector } from '@agor/core/gateway';
-import type { AgenticToolName, ChannelType, GatewayChannel, Session, User } from '@agor/core/types';
+import type {
+  AgenticToolName,
+  ChannelType,
+  GatewayChannel,
+  MessageSource,
+  Session,
+  User,
+} from '@agor/core/types';
 import { getDefaultPermissionMode, SessionStatus } from '@agor/core/types';
 
 /**
@@ -56,6 +68,7 @@ interface RouteMessageResult {
 export class GatewayService {
   private channelRepo: GatewayChannelRepository;
   private threadMapRepo: ThreadSessionMapRepository;
+  private usersRepo: UsersRepository;
   private app: Application;
 
   /** Active Socket Mode listeners keyed by channel ID */
@@ -72,6 +85,7 @@ export class GatewayService {
   constructor(db: Database, app: Application) {
     this.channelRepo = new GatewayChannelRepository(db);
     this.threadMapRepo = new ThreadSessionMapRepository(db);
+    this.usersRepo = new UsersRepository(db);
     this.app = app;
   }
 
@@ -82,6 +96,9 @@ export class GatewayService {
   async refreshChannelState(): Promise<void> {
     const channels = await this.channelRepo.findAll();
     this.hasActiveChannels = channels.some((ch) => ch.enabled);
+    console.log(
+      `[gateway] refreshChannelState: found ${channels.length} channels, ${channels.filter((ch) => ch.enabled).length} enabled`
+    );
   }
 
   /**
@@ -117,17 +134,107 @@ export class GatewayService {
       throw new Error('Channel is disabled');
     }
 
-    // 2. Fetch channel owner user (needed for auth context + agentic defaults)
-    const usersService = this.app.service('users') as {
-      get: (id: string) => Promise<User>;
-    };
-    const user = await usersService.get(channel.agor_user_id);
-
-    // 3. Look up existing thread mapping
+    // 2. Look up existing thread mapping
     const existingMapping = await this.threadMapRepo.findByChannelAndThread(
       channel.id,
       data.thread_id
     );
+
+    // 3. Cross-channel ownership check (MUST happen before any sendDebugMessage calls).
+    // If this thread is owned by a DIFFERENT gateway channel on the same daemon,
+    // silently drop the message — we must not interfere with another gateway's thread.
+    // This covers all rejection paths: unmapped thread replies, user alignment failures, etc.
+    if (!existingMapping) {
+      const otherChannelMapping = await this.threadMapRepo.findByThread(data.thread_id);
+      if (otherChannelMapping) {
+        console.log(
+          `[gateway] IGNORED: Thread ${data.thread_id} owned by channel ${otherChannelMapping.channel_id.substring(0, 8)}, not ours (${channel.id.substring(0, 8)}). Silently dropping.`
+        );
+        return {
+          success: false,
+          sessionId: '',
+          created: false,
+        };
+      }
+    }
+
+    // 4. Reject unmapped thread replies that came through without mention.
+    // This prevents unauthorized session creation when users reply to random threads
+    // without explicitly mentioning the bot. Only threads where the bot was mentioned
+    // (creating a mapping) can continue conversations without mentions.
+    // IMPORTANT: Silently drop — do NOT send a debug message. These are normal messages
+    // in threads that have nothing to do with Agor. Sending a visible rejection would
+    // cause the bot to spam every active thread in the channel.
+    if (!existingMapping && data.metadata?.requires_mapping_verification) {
+      // Use debug level — this fires for every non-Agor thread reply in monitored
+      // channels and would create excessive log noise at info level.
+      console.debug(
+        `[gateway] IGNORED: Thread reply without mention in unmapped thread: channel=${channel.id.substring(0, 8)}, thread=${data.thread_id}`
+      );
+      return {
+        success: false,
+        sessionId: '',
+        created: false,
+      };
+    }
+
+    // 5. Fetch channel owner user (needed for auth context + agentic defaults)
+    const usersService = this.app.service('users') as {
+      get: (id: string) => Promise<User>;
+    };
+    const channelOwner = await usersService.get(channel.agor_user_id);
+
+    // 6. Resolve effective user (Slack user alignment or channel owner fallback)
+    let user = channelOwner;
+    // Check both the channel config and the connector-reported metadata flag.
+    // The metadata flag signals the connector actually attempted alignment for
+    // this specific message (it has access to the runtime config at listen time).
+    const alignSlackUsers =
+      (channel.config as Record<string, unknown>).align_slack_users === true ||
+      data.metadata?.align_slack_users === true;
+
+    if (alignSlackUsers) {
+      if (data.metadata?.slack_user_email && typeof data.metadata.slack_user_email === 'string') {
+        const email = data.metadata.slack_user_email.toLowerCase().trim();
+        const matchedUser = await this.usersRepo.findByEmail(email);
+
+        if (matchedUser) {
+          console.log(
+            `[gateway] Slack user aligned: ${email} → Agor user ${matchedUser.user_id.substring(0, 8)} (${matchedUser.name || matchedUser.email})`
+          );
+          user = await usersService.get(matchedUser.user_id);
+        } else {
+          console.log(`[gateway] Slack user alignment failed: no Agor user with email ${email}`);
+          this.sendDebugMessage(
+            channel,
+            data.thread_id,
+            `User ${email} doesn't have an Agor account. Ask an admin to create an account with this email, or disable user alignment.`
+          );
+          return {
+            success: false,
+            sessionId: '',
+            created: false,
+          };
+        }
+      } else {
+        // Alignment is enabled but email couldn't be resolved (missing
+        // users:read.email scope, Slack API error, or no email on profile).
+        // Reject instead of silently falling back to channel owner.
+        console.log(
+          `[gateway] Slack user alignment failed: could not resolve email for Slack user ${data.user_name ?? 'unknown'} (thread=${data.thread_id})`
+        );
+        this.sendDebugMessage(
+          channel,
+          data.thread_id,
+          "Couldn't resolve your Slack identity. The bot may be missing the `users:read.email` scope, or your Slack profile has no email. Ask an admin to check the bot's scopes."
+        );
+        return {
+          success: false,
+          sessionId: '',
+          created: false,
+        };
+      }
+    }
 
     let sessionId: string;
     let created = false;
@@ -170,11 +277,12 @@ export class GatewayService {
         title: data.text.substring(0, 100),
         description: data.text,
         worktree_id: channel.target_worktree_id,
-        created_by: channel.agor_user_id,
+        created_by: user.user_id,
         // Stamp session with creator's unix_username for executor impersonation.
         // Normally set by the setSessionUnixUsername hook, but that hook skips
         // internal calls (no provider). Gateway sessions are internal, so we
-        // must set it explicitly using the channel owner's user record.
+        // must set it explicitly. When user alignment is active, this uses the
+        // aligned user's unix_username; otherwise the channel owner's.
         unix_username: user.unix_username ?? null,
         status: SessionStatus.IDLE,
         agentic_tool: agenticTool,
@@ -188,6 +296,16 @@ export class GatewayService {
           : undefined,
         tasks: [],
         message_count: 0,
+        // Denormalized gateway metadata (immutable snapshot at creation time)
+        // Avoids N+1 lookups when rendering board cards
+        custom_context: {
+          gateway_source: {
+            channel_id: channel.id,
+            channel_name: channel.name,
+            channel_type: channel.channel_type,
+            thread_id: data.thread_id,
+          },
+        },
       });
 
       sessionId = session.session_id;
@@ -203,35 +321,62 @@ export class GatewayService {
         metadata: data.metadata ?? null,
       });
 
-      this.sendDebugMessage(
-        channel,
-        data.thread_id,
-        `Session ${sessionId.substring(0, 8)} created, sending prompt to agent...`
-      );
+      // Get session URL from created session (URL is added by after hook)
+      // Fetch the session to get the URL property
+      let sessionUrl: string | null = null;
+      try {
+        const sessionsService = this.app.service('sessions') as {
+          get: (id: string, params?: { user: User }) => Promise<Session & { url?: string | null }>;
+        };
+        const sessionWithUrl = await sessionsService.get(sessionId, { user });
+        sessionUrl = sessionWithUrl.url || null;
+      } catch (error) {
+        console.warn('[gateway] Failed to fetch session URL:', error);
+      }
+
+      // Send debug message with session URL
+      const sessionIdShort = sessionId.substring(0, 8);
+      const message = sessionUrl
+        ? `Session created: ${sessionUrl}`
+        : `Session ${sessionIdShort} created, sending prompt to agent...`;
+
+      this.sendDebugMessage(channel, data.thread_id, message);
     }
 
     // Touch channel last_message_at
     await this.channelRepo.updateLastMessage(channel.id);
 
-    // 4. Send prompt via /sessions/:id/prompt — triggers full flow:
-    //    task creation, user message, git state, executor spawn
+    // 4. Send prompt via /sessions/:id/prompt — it handles queue-vs-execute internally
+    //    (auto-queues when session is busy or has queued items, executes when idle)
     try {
       const promptService = this.app.service('/sessions/:id/prompt') as {
         create: (
-          data: { prompt: string; permissionMode?: string },
+          data: { prompt: string; permissionMode?: string; messageSource?: MessageSource },
           params: Record<string, unknown>
         ) => Promise<Record<string, unknown>>;
       };
 
       // Internal call: pass user, omit provider to bypass auth hooks
-      await promptService.create(
-        { prompt: data.text, permissionMode },
+      // Mark message source as 'gateway' so it won't be echoed back to Slack
+      const response = await promptService.create(
+        { prompt: data.text, permissionMode, messageSource: 'gateway' },
         { route: { id: sessionId }, user }
       );
 
-      console.log(
-        `[gateway] Prompt sent to session ${sessionId.substring(0, 8)} via /sessions/:id/prompt`
-      );
+      if (response.queued) {
+        console.log(
+          `[gateway] Message queued for session ${sessionId.substring(0, 8)} at position ${response.queue_position}`
+        );
+        this.sendDebugMessage(
+          channel,
+          data.thread_id,
+          `Session is busy, message queued at position ${response.queue_position}`
+        );
+      } else {
+        console.log(
+          `[gateway] Prompt sent to session ${sessionId.substring(0, 8)} via /sessions/:id/prompt`
+        );
+      }
     } catch (error) {
       console.error('[gateway] Failed to send prompt to session:', error);
       this.sendDebugMessage(channel, data.thread_id, `Error sending prompt: ${error}`);
@@ -263,6 +408,10 @@ export class GatewayService {
       // No mapping → cheap no-op (session is not gateway-connected)
       return { routed: false };
     }
+
+    console.log(
+      `[gateway] Found mapping: channel=${mapping.channel_id.substring(0, 8)}, thread=${mapping.thread_id}`
+    );
 
     const channel = await this.channelRepo.findById(mapping.channel_id);
 
@@ -324,6 +473,60 @@ export class GatewayService {
 
     for (const channel of eligible) {
       await this.startChannelListener(channel);
+    }
+  }
+
+  /**
+   * Start or stop a Socket Mode listener for a single channel based on its enabled state
+   * (public wrapper for hook usage)
+   */
+  async startListenerForChannel(channelId: string): Promise<void> {
+    const channel = await this.channelRepo.findById(channelId);
+    if (!channel) {
+      console.warn(`[gateway] Cannot manage listener: channel ${channelId} not found`);
+      return;
+    }
+
+    // If channel is disabled, stop the listener
+    if (!channel.enabled) {
+      await this.stopChannelListener(channelId);
+      console.log(`[gateway] Stopped listener for disabled channel ${channel.name}`);
+      return;
+    }
+
+    // If no connector or no app_token, stop any existing listener
+    if (!hasConnector(channel.channel_type as ChannelType)) {
+      console.warn(`[gateway] No connector for channel type: ${channel.channel_type}`);
+      await this.stopChannelListener(channelId);
+      return;
+    }
+    if (!channel.config.app_token) {
+      console.log(`[gateway] Skipping listener for channel ${channel.name} (no app_token)`);
+      await this.stopChannelListener(channelId);
+      return;
+    }
+
+    // Start or restart the listener
+    await this.startChannelListener(channel);
+  }
+
+  /**
+   * Stop a Socket Mode listener for a single channel
+   */
+  async stopChannelListener(channelId: string): Promise<void> {
+    const connector = this.activeListeners.get(channelId);
+    if (!connector) {
+      return; // Not listening
+    }
+
+    try {
+      if (connector.stopListening) {
+        await connector.stopListening();
+      }
+      this.activeListeners.delete(channelId);
+      console.log(`[gateway] Listener stopped for channel ${channelId.substring(0, 8)}`);
+    } catch (error) {
+      console.error(`[gateway] Error stopping listener for ${channelId}:`, error);
     }
   }
 

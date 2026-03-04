@@ -21,6 +21,7 @@ import {
   SubnodeOutlined,
 } from '@ant-design/icons';
 import { App, Badge, Button, Space, Spin, Tooltip, Typography, theme } from 'antd';
+import Handlebars from 'handlebars';
 import React from 'react';
 import { getDaemonUrl } from '../../config/daemon';
 import { useAppActions } from '../../contexts/AppActionsContext';
@@ -47,13 +48,36 @@ import { ThinkingModeSelector } from '../ThinkingModeSelector';
 import { ToolIcon } from '../ToolIcon';
 import { SessionPanelContent } from './SessionPanelContent';
 
+// Register helper to check if value is defined (not undefined)
+// This allows us to distinguish between false and undefined in templates
+Handlebars.registerHelper('isDefined', (value: unknown) => value !== undefined);
+
 // Re-export PermissionMode from SDK for convenience
 export type { PermissionMode };
 
-// Compile the spawn subsession template once at module level
-const compiledSpawnSubsessionTemplate = compileTemplate<{ userPrompt: string }>(
-  spawnSubsessionTemplate
-);
+/** Context shape for the spawn subsession Handlebars template */
+interface SpawnTemplateContext {
+  userPrompt: string;
+  hasConfig?: boolean;
+  agenticTool?: string;
+  permissionMode?: PermissionMode;
+  modelConfig?: SpawnConfig['modelConfig'];
+  codexSandboxMode?: CodexSandboxMode;
+  codexApprovalPolicy?: CodexApprovalPolicy;
+  codexNetworkAccess?: boolean;
+  mcpServerIds?: string[];
+  hasCallbackConfig?: boolean;
+  callbackConfig?: {
+    enableCallback?: boolean;
+    includeLastMessage?: boolean;
+    includeOriginalPrompt?: boolean;
+  };
+  extraInstructions?: string;
+}
+
+// Compile the spawn subsession template once at module level (after helper registration)
+const compiledSpawnSubsessionTemplate =
+  compileTemplate<SpawnTemplateContext>(spawnSubsessionTemplate);
 
 export interface SessionPanelProps {
   client: AgorClient | null;
@@ -149,6 +173,7 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
   const [spawnModalOpen, setSpawnModalOpen] = React.useState(false);
   const [uploadModalOpen, setUploadModalOpen] = React.useState(false);
   const [droppedFiles, setDroppedFiles] = React.useState<File[]>([]);
+  const [stopRequestInFlight, setStopRequestInFlight] = React.useState(false);
 
   const currentUser = currentUserId ? userById.get(currentUserId) || null : null;
   const { tasks } = useTasks(client, session?.session_id || null, currentUser, open);
@@ -381,12 +406,21 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
   };
 
   const handleStop = async () => {
-    if (!session || !client || isStopping) return;
+    if (!session || !client || stopRequestInFlight) return;
 
+    // Show feedback immediately if this is a retry
+    if (isStopping) {
+      message.info('Retrying stop request...');
+    }
+
+    setStopRequestInFlight(true);
     try {
       await client.service(`sessions/${session.session_id}/stop`).create({});
     } catch (error) {
       console.error('Failed to stop execution:', error);
+      message.error('Failed to stop execution. You can try again.');
+    } finally {
+      setStopRequestInFlight(false);
     }
   };
 
@@ -433,12 +467,7 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
         config.includeOriginalPrompt !== undefined ||
         config.extraInstructions !== undefined;
 
-      const Handlebars = await import('handlebars');
-      Handlebars.registerHelper('isDefined', (value) => value !== undefined);
-
-      const compiledTemplate = Handlebars.compile(spawnSubsessionTemplate);
-
-      const metaPrompt = compiledTemplate({
+      const metaPrompt = compiledSpawnSubsessionTemplate({
         userPrompt: config.prompt || '',
         hasConfig,
         agenticTool: config.agent,
@@ -524,6 +553,8 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
         return 'success';
       case 'failed':
         return 'error';
+      case 'timed_out':
+        return 'warning';
       default:
         return 'default';
     }
@@ -559,7 +590,7 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
         />
       )}
       <Space
-        direction="vertical"
+        orientation="vertical"
         style={{ width: '100%', position: 'relative', zIndex: 1 }}
         size={8}
       >
@@ -671,15 +702,21 @@ const SessionPanel: React.FC<SessionPanelProps> = ({
             <Space.Compact>
               <Tooltip
                 title={
-                  isStopping ? 'Stopping...' : isRunning ? 'Stop Execution' : 'No active execution'
+                  stopRequestInFlight
+                    ? 'Sending stop request...'
+                    : isStopping
+                      ? 'Stopping... (Click again to retry if stuck)'
+                      : isRunning
+                        ? 'Stop Execution'
+                        : 'No active execution'
                 }
               >
                 <Button
                   danger
                   icon={<StopOutlined />}
                   onClick={handleStop}
-                  disabled={!isRunning || isStopping}
-                  loading={isStopping}
+                  disabled={!isRunning || stopRequestInFlight}
+                  loading={isStopping && !stopRequestInFlight}
                 />
               </Tooltip>
               <Tooltip title="Advanced Spawn Options">

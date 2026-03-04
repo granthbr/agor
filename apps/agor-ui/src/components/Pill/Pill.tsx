@@ -13,9 +13,11 @@ import {
   FileTextOutlined,
   ForkOutlined,
   GithubOutlined,
+  LinkOutlined,
   MessageOutlined,
   PercentageOutlined,
   RobotOutlined,
+  SlackOutlined,
   ThunderboltOutlined,
   ToolOutlined,
 } from '@ant-design/icons';
@@ -709,6 +711,11 @@ export const StatusPill: React.FC<StatusPillProps> = ({ status, style }) => {
       color: PILL_COLORS.processing,
       text: 'Running',
     },
+    timed_out: {
+      icon: <ClockCircleOutlined />,
+      color: PILL_COLORS.warning,
+      text: 'Timed Out',
+    },
     idle: {
       icon: <ToolOutlined />,
       color: PILL_COLORS.session,
@@ -913,23 +920,90 @@ export const RepoPill: React.FC<RepoPillProps> = ({
   );
 };
 
+/**
+ * Extract a concise display label from a URL.
+ * GitHub: org/repo#123, Shortcut: story/12345, Jira/Linear: ticket ID, etc.
+ */
+export function getUrlDisplayLabel(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const pathParts = parsed.pathname.split('/').filter(Boolean);
+
+    if (parsed.hostname === 'github.com' && pathParts.length >= 4) {
+      const [org, repo, , number] = pathParts;
+      return `${org}/${repo}#${number}`;
+    }
+
+    if (parsed.hostname === 'app.shortcut.com' && pathParts.length >= 3) {
+      return `${pathParts[1]}/${pathParts[2]}`;
+    }
+
+    if (parsed.hostname.includes('atlassian.net') || parsed.hostname.includes('jira')) {
+      return pathParts[pathParts.length - 1] || parsed.hostname;
+    }
+
+    if (parsed.hostname === 'linear.app') {
+      // Linear URLs: /issue/TEAM-123/slug — extract the issue ID, not the slug
+      const issueIdx = pathParts.indexOf('issue');
+      if (issueIdx !== -1 && pathParts[issueIdx + 1]) {
+        return pathParts[issueIdx + 1];
+      }
+      return pathParts[pathParts.length - 1] || parsed.hostname;
+    }
+
+    return pathParts[pathParts.length - 1] || parsed.hostname;
+  } catch {
+    return url.split('/').pop() || '?';
+  }
+}
+
+export function isGitHubUrl(url: string): boolean {
+  try {
+    const { hostname } = new URL(url);
+    return hostname === 'github.com' || hostname.endsWith('.github.com');
+  } catch {
+    return false;
+  }
+}
+
+function getIssueIcon(url: string): React.ReactNode {
+  if (isGitHubUrl(url)) return <GithubOutlined />;
+  return <LinkOutlined />;
+}
+
+function getPrIcon(url: string): React.ReactNode {
+  if (isGitHubUrl(url)) return <GithubOutlined />;
+  return <BranchesOutlined />;
+}
+
+const pillTextStyle: React.CSSProperties = {
+  maxWidth: 160,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  display: 'inline-block',
+  verticalAlign: 'middle',
+};
+
 interface IssuePillProps extends BasePillProps {
   issueUrl: string;
   issueNumber?: string;
 }
 
 export const IssuePill: React.FC<IssuePillProps> = ({ issueUrl, issueNumber, style }) => {
-  const displayText = issueNumber || issueUrl.split('/').pop() || '?';
+  const displayText = issueNumber || getUrlDisplayLabel(issueUrl);
 
   return (
-    <Tag
-      icon={<GithubOutlined />}
-      color={PILL_COLORS.git}
-      style={{ ...style, cursor: 'pointer' }}
-      onClick={() => window.open(issueUrl, '_blank')}
-    >
-      Issue: {displayText}
-    </Tag>
+    <Tooltip title={issueUrl}>
+      <Tag
+        icon={getIssueIcon(issueUrl)}
+        color={PILL_COLORS.git}
+        style={{ ...style, cursor: 'pointer', maxWidth: 220 }}
+        onClick={() => window.open(issueUrl, '_blank')}
+      >
+        <span style={pillTextStyle}>Issue: {displayText}</span>
+      </Tag>
+    </Tooltip>
   );
 };
 
@@ -939,17 +1013,19 @@ interface PullRequestPillProps extends BasePillProps {
 }
 
 export const PullRequestPill: React.FC<PullRequestPillProps> = ({ prUrl, prNumber, style }) => {
-  const displayText = prNumber || prUrl.split('/').pop() || '?';
+  const displayText = prNumber || getUrlDisplayLabel(prUrl);
 
   return (
-    <Tag
-      icon={<GithubOutlined />}
-      color={PILL_COLORS.git}
-      style={{ ...style, cursor: 'pointer' }}
-      onClick={() => window.open(prUrl, '_blank')}
-    >
-      PR: {displayText}
-    </Tag>
+    <Tooltip title={prUrl}>
+      <Tag
+        icon={getPrIcon(prUrl)}
+        color={PILL_COLORS.git}
+        style={{ ...style, cursor: 'pointer', maxWidth: 220 }}
+        onClick={() => window.open(prUrl, '_blank')}
+      >
+        <span style={pillTextStyle}>PR: {displayText}</span>
+      </Tag>
+    </Tooltip>
   );
 };
 
@@ -976,5 +1052,31 @@ export const ScheduledRunPill: React.FC<ScheduledRunPillProps> = ({ scheduledRun
     <Pill icon={<ClockCircleOutlined />} color={PILL_COLORS.processing} tooltip={tooltip}>
       {displayTime}
     </Pill>
+  );
+};
+
+interface ChannelPillProps extends BasePillProps {
+  channelType: string; // e.g., "slack", "discord"
+  channelName: string;
+}
+
+export const ChannelPill: React.FC<ChannelPillProps> = ({ channelType, channelName, style }) => {
+  // Map channel type to icon
+  const getIcon = () => {
+    const type = (channelType || '').toLowerCase();
+    switch (type) {
+      case 'slack':
+        return <SlackOutlined />;
+      case 'discord':
+        return <MessageOutlined />; // TODO: Add DiscordOutlined when available
+      default:
+        return <MessageOutlined />;
+    }
+  };
+
+  return (
+    <Tag icon={getIcon()} color={PILL_COLORS.success} style={style}>
+      {channelName}
+    </Tag>
   );
 };

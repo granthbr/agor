@@ -9,6 +9,7 @@ import { type ApiKeyName, resolveApiKey } from '@agor/core/config';
 import { getGitState } from '@agor/core/git';
 import type {
   MessageID,
+  MessageSource,
   PermissionMode,
   SessionID,
   StreamingEventType,
@@ -30,7 +31,8 @@ export interface BaseTool {
     taskId?: TaskID,
     permissionMode?: PermissionMode,
     callbacks?: StreamingCallbacks,
-    abortController?: AbortController
+    abortController?: AbortController,
+    messageSource?: MessageSource
   ): Promise<{
     userMessageId: MessageID;
     assistantMessageIds: MessageID[];
@@ -275,6 +277,7 @@ export async function executeToolTask(params: {
   abortController: AbortController;
   apiKeyEnvVar: string;
   toolName: string;
+  messageSource?: 'gateway' | 'agor';
   createTool: (
     repos: ReturnType<typeof createFeathersBackedRepositories>,
     apiKey: string,
@@ -314,7 +317,8 @@ export async function executeToolTask(params: {
   // Pass the resolved key (or empty string) and useNativeAuth flag
   const tool = createTool(ctx.repos, resolution.apiKey || '', resolution.useNativeAuth);
 
-  // Wire up abort signal to tool's stopTask method
+  // Wire up abort signal to tool's stopTask method.
+  // Triggered by SIGTERM handler calling abortController.abort().
   const abortHandler = async () => {
     console.log(`[${toolName}] Abort signal received, calling tool.stopTask()...`);
     if (tool.stopTask) {
@@ -322,8 +326,6 @@ export async function executeToolTask(params: {
         const stopResult = await tool.stopTask(sessionId, taskId);
         if (stopResult.success) {
           console.log(`[${toolName}] Tool stopped successfully`);
-          // NOTE: Completion signal is sent AFTER executePromptWithStreaming returns
-          // This ensures all streaming chunks have been flushed before we signal completion
         } else {
           console.warn(`[${toolName}] Tool stop failed: ${stopResult.reason}`);
         }
@@ -352,7 +354,8 @@ export async function executeToolTask(params: {
       taskId,
       permissionMode,
       ctx.callbacks,
-      params.abortController
+      params.abortController,
+      params.messageSource
     );
 
     console.log(
@@ -410,22 +413,9 @@ export async function executeToolTask(params: {
     }
 
     // Update task status to completed/stopped with git SHA and SDK responses
+    // Note: The stop endpoint may have already patched task to STOPPED via process kill.
+    // The tasks.ts patch hook guards against double-updates (wasAlreadyTerminal check).
     await client.service('tasks').patch(taskId, patchData);
-
-    // Send completion signal if task was stopped
-    if (result.wasStopped) {
-      try {
-        // biome-ignore lint/suspicious/noExplicitAny: Feathers types don't support custom events
-        (client.service('sessions') as any).emit('task_stopped_complete', {
-          session_id: sessionId,
-          task_id: taskId,
-          stopped_at: new Date().toISOString(),
-        });
-        console.log(`✅ [${toolName}] Sent stop complete signal after execution finished`);
-      } catch (error) {
-        console.error(`❌ [${toolName}] Failed to send stop complete signal:`, error);
-      }
-    }
   } catch (error) {
     const err = error as Error;
     console.error(`[${toolName}] Execution failed:`, err);

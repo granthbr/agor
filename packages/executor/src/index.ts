@@ -8,7 +8,13 @@
  * 4. Exits when task completes
  */
 
-import type { PermissionMode, PermissionScope, SessionID, TaskID } from '@agor/core/types';
+import type {
+  MessageSource,
+  PermissionMode,
+  PermissionScope,
+  SessionID,
+  TaskID,
+} from '@agor/core/types';
 import { globalPermissionManager } from './permissions/permission-manager.js';
 import { type AgorClient, createFeathersClient } from './services/feathers-client.js';
 
@@ -20,6 +26,7 @@ export interface ExecutorConfig {
   tool: 'claude-code' | 'gemini' | 'codex' | 'opencode';
   permissionMode?: PermissionMode;
   daemonUrl: string;
+  messageSource?: MessageSource;
 }
 
 export class AgorExecutor {
@@ -82,45 +89,13 @@ export class AgorExecutor {
 
   /**
    * Setup event listeners for WebSocket events
+   *
+   * Stop signaling is handled via Unix signals (SIGTERM/SIGKILL) from the daemon,
+   * not WebSocket events. The SIGTERM handler in setupShutdownHandlers() calls
+   * abortController.abort() for graceful shutdown.
    */
   private setupEventListeners(): void {
     if (!this.client) return;
-
-    // Listen for task_stop events
-    // biome-ignore lint/suspicious/noExplicitAny: Feathers types don't support custom events
-    (this.client.service('sessions') as any).on(
-      'task_stop',
-      async (data: {
-        session_id: string;
-        task_id: string;
-        sequence: number;
-        timestamp: string;
-      }) => {
-        console.log('[executor] Received task_stop event:', data);
-
-        // Only stop if this signal is for our task (task IDs are globally unique UUIDs)
-        if (data.task_id === this.config.taskId) {
-          // IMMEDIATELY send acknowledgment (before stopping)
-          try {
-            // biome-ignore lint/suspicious/noExplicitAny: Feathers types don't support custom events
-            (this.client!.service('sessions') as any).emit('task_stop_ack', {
-              session_id: data.session_id,
-              task_id: data.task_id,
-              sequence: data.sequence,
-              received_at: new Date().toISOString(),
-              status: 'stopping',
-            });
-            console.log(`✅ [executor] Sent stop ACK (seq ${data.sequence})`);
-          } catch (error) {
-            console.error('❌ [executor] Failed to send stop ACK:', error);
-          }
-
-          // Now initiate the stop
-          console.log('[executor] Stop signal received, aborting execution');
-          this.abortController.abort();
-        }
-      }
-    );
 
     // Listen for permission_resolved events
     // biome-ignore lint/suspicious/noExplicitAny: Feathers types don't support custom events
@@ -181,6 +156,7 @@ export class AgorExecutor {
       prompt: this.config.prompt,
       permissionMode: this.config.permissionMode,
       abortController: this.abortController,
+      messageSource: this.config.messageSource,
     });
 
     this.isRunning = false;

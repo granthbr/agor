@@ -4,7 +4,7 @@
  * Executes prompts using OpenAI Codex SDK with Feathers/WebSocket architecture
  */
 
-import type { PermissionMode, SessionID, TaskID } from '@agor/core/types';
+import type { MessageSource, PermissionMode, SessionID, TaskID } from '@agor/core/types';
 import { CodexTool } from '../../sdk-handlers/codex/index.js';
 import type { AgorClient } from '../../services/feathers-client.js';
 
@@ -20,6 +20,7 @@ export async function executeCodexTask(params: {
   prompt: string;
   permissionMode?: PermissionMode;
   abortController: AbortController;
+  messageSource?: MessageSource;
 }): Promise<void> {
   // Import base executor helper
   const { executeToolTask } = await import('./base-executor.js');
@@ -39,7 +40,8 @@ export async function executeCodexTask(params: {
         apiKey,
         repos.messagesService,
         repos.tasksService,
-        useNativeAuth // Flag for native auth (if applicable)
+        useNativeAuth, // Flag for native auth (if applicable)
+        repos.mcpServers // MCPServerRepository for global MCP server resolution
       ),
   });
 }

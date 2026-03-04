@@ -59,6 +59,25 @@ export interface AgorDaemonSettings {
    */
   public_url?: string;
 
+  /**
+   * Base URL for external/user-facing links (e.g., session URLs in Slack messages).
+   *
+   * Used to generate clickable URLs to sessions, boards, and other resources
+   * that are sent to external platforms like Slack, email, etc.
+   *
+   * Defaults to `http://localhost:{port}` in development.
+   * Should be set to your public domain in production (e.g., https://agor.example.com).
+   *
+   * Note: Should NOT include trailing slash.
+   *
+   * @example
+   * ```yaml
+   * daemon:
+   *   base_url: https://agor.sandbox.preset.zone
+   * ```
+   */
+  base_url?: string;
+
   /** Allow anonymous access (default: true for local mode) */
   allowAnonymous?: boolean;
 
@@ -193,6 +212,9 @@ export interface AgorExecutionSettings {
   /** Sync web passwords to Unix user passwords (default: true). When enabled, passwords are synced on user creation/update. */
   sync_unix_passwords?: boolean;
 
+  /** Permission request timeout in ms (default: 600000 = 10 minutes). When a permission request is not resolved within this time, the agent is notified and can continue. */
+  permission_timeout_ms?: number;
+
   /**
    * Executor command template for remote/containerized execution.
    *
@@ -298,6 +320,18 @@ export interface AgorCredentials {
 }
 
 /**
+ * Onboarding settings (stored by CLI init, consumed by UI wizard)
+ */
+export interface AgorOnboardingSettings {
+  /** Whether assistant setup was requested during init */
+  assistantPending?: boolean;
+  /** @deprecated Use assistantPending instead */
+  persistedAgentPending?: boolean;
+  /** Clone URL for the framework repo */
+  frameworkRepoUrl?: string;
+}
+
+/**
  * Complete Agor configuration
  */
 export interface AgorConfig {
@@ -330,6 +364,9 @@ export interface AgorConfig {
 
   /** Tool credentials (API keys, tokens) */
   credentials?: AgorCredentials;
+
+  /** Onboarding settings (CLI init → UI wizard) */
+  onboarding?: AgorOnboardingSettings;
 }
 
 /**
@@ -345,4 +382,5 @@ export type ConfigKey =
   | `codex.${keyof AgorCodexSettings}`
   | `execution.${keyof AgorExecutionSettings}`
   | `paths.${keyof AgorPathSettings}`
-  | `credentials.${keyof AgorCredentials}`;
+  | `credentials.${keyof AgorCredentials}`
+  | `onboarding.${keyof AgorOnboardingSettings}`;
