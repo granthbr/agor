@@ -1,4 +1,5 @@
 import type { AgorClient } from '@agor/core/api';
+import { composeTemplate } from '@agor/core/templates/compose';
 import type {
   AgenticToolName,
   CodexApprovalPolicy,
@@ -14,7 +15,6 @@ import { getDefaultPermissionMode } from '@agor/core/types';
 import { BookOutlined, DownOutlined } from '@ant-design/icons';
 import { Alert, Button, Collapse, Form, Input, Modal, Space, Typography } from 'antd';
 import { useEffect, useState } from 'react';
-import { composeTemplate } from '../../utils/composeTemplate';
 import { AgenticToolConfigForm } from '../AgenticToolConfigForm';
 import {
   type AgenticToolOption,

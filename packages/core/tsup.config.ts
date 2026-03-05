@@ -15,6 +15,7 @@ export default defineConfig({
     'permissions/index': 'src/permissions/index.ts',
     'feathers/index': 'src/feathers/index.ts', // FeathersJS runtime re-exports
     'lib/feathers-validation': 'src/lib/feathers-validation.ts', // FeathersJS query validation schemas
+    'templates/compose': 'src/templates/compose.ts', // Template + preprocessor composition
     'templates/handlebars-helpers': 'src/templates/handlebars-helpers.ts', // Handlebars helpers
     'templates/session-context': 'src/templates/session-context.ts', // Agor system prompt rendering
     'environment/variable-resolver': 'src/environment/variable-resolver.ts', // Environment variable resolution

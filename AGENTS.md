@@ -14,7 +14,8 @@ cd apps/agor-daemon && pnpm dev    # Daemon + watches @agor/core
 cd apps/agor-ui && pnpm dev        # UI dev server (:5173)
 
 # Monorepo commands (from root)
-pnpm build                         # Build all packages
+pnpm build                         # Build all packages (parallel)
+npx turbo run build --concurrency=1  # Memory-safe build (<8GB RAM machines)
 pnpm typecheck                     # TypeScript check all packages
 pnpm lint                          # Biome lint check
 pnpm lint:fix                      # Auto-fix lint issues
@@ -410,6 +411,22 @@ cd apps/agor-daemon && rm -rf node_modules/.tsx
 
 # Core changes not picked up (shouldn't happen with watch mode)
 cd packages/core && pnpm build
+```
+
+### OOM on Memory-Constrained Machines
+
+Turbo builds all 7 packages in parallel by default. On machines with <8GB RAM (e.g., the remote instance at 3.8GB), this causes OOM crashes:
+
+```bash
+# Sequential build (safe for low-memory machines)
+npx turbo run build --concurrency=1
+```
+
+The `agor-core-watch` service (tsup watch + DTS) uses ~1.8GB alone. On low-memory machines, build core once instead of running watch, then restart after code changes:
+
+```bash
+~/agor-ctl.sh build    # One-time core build
+~/agor-ctl.sh restart  # Pick up changes
 ```
 
 ### Stale SDK Session ID

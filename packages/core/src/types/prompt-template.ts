@@ -27,10 +27,16 @@ export type PromptRatingID = UUID;
 // ============================================================================
 
 /** Template categories */
-export type PromptTemplateCategory = 'session' | 'zone' | 'scheduler' | 'generic' | 'preprocessor';
+export type PromptTemplateCategory =
+  | 'session'
+  | 'zone'
+  | 'scheduler'
+  | 'generic'
+  | 'preprocessor'
+  | 'gateway';
 
 /** Architect generation target */
-export type PromptArchitectTarget = 'zone' | 'session' | 'scheduler' | 'preprocessor';
+export type PromptArchitectTarget = 'zone' | 'session' | 'scheduler' | 'preprocessor' | 'gateway';
 
 /** Preprocessor sub-types */
 export type PreprocessorType =

@@ -56,6 +56,7 @@ export const TemplateSearch: React.FC<TemplateSearchProps> = ({
           { label: 'Zone', value: 'zone' },
           { label: 'Session', value: 'session' },
           { label: 'Scheduler', value: 'scheduler' },
+          { label: 'Gateway', value: 'gateway' },
           { label: 'Generic', value: 'generic' },
           { label: 'Pre-Process', value: 'preprocessor' },
         ]}

@@ -969,7 +969,7 @@ export const promptTemplates = pgTable(
     title: text('title').notNull(),
     description: text('description'),
     category: text('category', {
-      enum: ['session', 'zone', 'scheduler', 'generic', 'preprocessor'],
+      enum: ['session', 'zone', 'scheduler', 'generic', 'preprocessor', 'gateway'],
     }).notNull(),
     template: text('template').notNull(),
     variables: text('variables'), // JSON string array

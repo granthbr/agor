@@ -55,6 +55,7 @@ const CATEGORY_COLORS: Record<PromptTemplateCategory, string> = {
   session: 'blue',
   zone: 'green',
   scheduler: 'purple',
+  gateway: 'orange',
   generic: 'default',
   preprocessor: 'magenta',
 };
@@ -387,6 +388,7 @@ export const TemplatesTable: React.FC<TemplatesTableProps> = ({ client, boardId 
             { value: 'session', label: 'Session' },
             { value: 'zone', label: 'Zone' },
             { value: 'scheduler', label: 'Scheduler' },
+            { value: 'gateway', label: 'Gateway' },
             { value: 'generic', label: 'Generic' },
             { value: 'preprocessor', label: 'Pre-Process' },
           ]}
@@ -460,6 +462,7 @@ export const TemplatesTable: React.FC<TemplatesTableProps> = ({ client, boardId 
                 { value: 'session', label: 'Session' },
                 { value: 'zone', label: 'Zone' },
                 { value: 'scheduler', label: 'Scheduler' },
+                { value: 'gateway', label: 'Gateway' },
                 { value: 'generic', label: 'Generic' },
                 { value: 'preprocessor', label: 'Pre-Process Fragment' },
               ]}

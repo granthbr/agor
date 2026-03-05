@@ -6,8 +6,9 @@
  */
 
 import { extractSlugFromUrl, isValidGitUrl, isValidSlug } from '@agor/core/config';
-import type { Database } from '@agor/core/db';
+import { type Database, PromptTemplatesRepository } from '@agor/core/db';
 import type { Application } from '@agor/core/feathers';
+import { composeTemplate } from '@agor/core/templates/compose';
 import type { AgenticToolName, Board, MCPServer } from '@agor/core/types';
 import { NotFoundError } from '@agor/core/utils/errors';
 import { normalizeOptionalHttpUrl } from '@agor/core/utils/url';
@@ -33,6 +34,8 @@ function coerceString(value: unknown): string | undefined {
  * Setup MCP routes on FeathersJS app
  */
 export function setupMCPRoutes(app: Application, db: Database): void {
+  const promptTemplatesRepo = new PromptTemplatesRepository(db);
+
   // MCP endpoint: POST /mcp
   // Expects: sessionToken query param
   // Returns: MCP JSON-RPC response
@@ -2300,6 +2303,26 @@ export function setupMCPRoutes(app: Application, db: Database): void {
               );
 
               const { renderTemplate } = await import('@agor/core/templates/handlebars-helpers');
+
+              // Compose with preprocessors if configured
+              let triggerTemplateText = zone.trigger!.template;
+              if (zone.trigger!.preprocessor_ids?.length) {
+                const preprocessors: Array<{
+                  template: string;
+                  metadata?: { insertion_mode?: 'before' | 'after' } | null;
+                }> = [];
+                for (const ppId of zone.trigger!.preprocessor_ids) {
+                  const pp = await promptTemplatesRepo.findById(ppId);
+                  if (pp) {
+                    const meta = pp.metadata as { insertion_mode?: 'before' | 'after' } | null;
+                    preprocessors.push({ template: pp.template, metadata: meta });
+                  }
+                }
+                if (preprocessors.length > 0) {
+                  triggerTemplateText = composeTemplate(triggerTemplateText, preprocessors);
+                }
+              }
+
               const templateContext = {
                 worktree: {
                   name: worktree.name,
@@ -2319,7 +2342,7 @@ export function setupMCPRoutes(app: Application, db: Database): void {
                 },
               };
 
-              const renderedPrompt = renderTemplate(zone.trigger!.template, templateContext);
+              const renderedPrompt = renderTemplate(triggerTemplateText, templateContext);
 
               if (renderedPrompt) {
                 const promptResponse = await app.service('/sessions/:id/prompt').create(
@@ -2367,6 +2390,26 @@ export function setupMCPRoutes(app: Application, db: Database): void {
               );
 
               const { renderTemplate } = await import('@agor/core/templates/handlebars-helpers');
+
+              // Compose with preprocessors if configured
+              let triggerTemplateText2 = zone.trigger!.template;
+              if (zone.trigger!.preprocessor_ids?.length) {
+                const preprocessors: Array<{
+                  template: string;
+                  metadata?: { insertion_mode?: 'before' | 'after' } | null;
+                }> = [];
+                for (const ppId of zone.trigger!.preprocessor_ids) {
+                  const pp = await promptTemplatesRepo.findById(ppId);
+                  if (pp) {
+                    const meta = pp.metadata as { insertion_mode?: 'before' | 'after' } | null;
+                    preprocessors.push({ template: pp.template, metadata: meta });
+                  }
+                }
+                if (preprocessors.length > 0) {
+                  triggerTemplateText2 = composeTemplate(triggerTemplateText2, preprocessors);
+                }
+              }
+
               const templateContext = {
                 worktree: {
                   name: worktree.name,
@@ -2386,7 +2429,7 @@ export function setupMCPRoutes(app: Application, db: Database): void {
                 },
               };
 
-              const renderedPrompt = renderTemplate(zone.trigger!.template, templateContext);
+              const renderedPrompt = renderTemplate(triggerTemplateText2, templateContext);
 
               if (renderedPrompt) {
                 // Determine agent from trigger config, validate against known values

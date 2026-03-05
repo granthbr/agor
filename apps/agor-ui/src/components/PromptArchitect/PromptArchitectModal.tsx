@@ -7,6 +7,7 @@
  */
 
 import type { AgorClient } from '@agor/core/api';
+import { composeTemplate } from '@agor/core/templates/compose';
 import type {
   PreprocessorMetadata,
   PromptArchitectClarifyResult,
@@ -26,7 +27,6 @@ import {
   Typography,
 } from 'antd';
 import { useState } from 'react';
-import { composeTemplate } from '../../utils/composeTemplate';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { PreprocessorPicker } from '../PromptLibrary/PreprocessorPicker';
 
@@ -262,6 +262,7 @@ export const PromptArchitectModal: React.FC<PromptArchitectModalProps> = ({
             { value: 'zone', label: 'Zone Template (Handlebars)' },
             { value: 'session', label: 'Session Prompt (static)' },
             { value: 'scheduler', label: 'Scheduler Template (Handlebars)' },
+            { value: 'gateway', label: 'Gateway Template (Handlebars)' },
             { value: 'preprocessor', label: 'Pre-Process Fragment' },
           ]}
         />

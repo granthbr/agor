@@ -52,3 +52,7 @@ sync-to-remote.sh
 agor-main-board.png
 batch-reprocessor-files.tar.gz
 batch-reprocessor-export/
+
+# Pre-teams agent prototype (superseded by Claude Code teams)
+agents/
+init-agents.sh

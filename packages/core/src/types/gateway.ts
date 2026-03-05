@@ -49,6 +49,10 @@ export interface GatewayAgenticConfig {
   codexSandboxMode?: CodexSandboxMode;
   codexApprovalPolicy?: CodexApprovalPolicy;
   codexNetworkAccess?: boolean;
+  /** Template applied to the first message when creating a new session */
+  initial_template_id?: string;
+  /** Ordered list of preprocessor template IDs to compose with the initial template */
+  preprocessor_ids?: string[];
 }
 
 // ============================================================================

@@ -85,6 +85,14 @@ ALWAYS structure output as:
 - These are one-time prompts for a specific session
 - Can be more detailed and specific since they run once
 
+### Gateway Templates (target: "gateway")
+- Generate Handlebars templates that wrap incoming messages from messaging platforms (Slack, Discord, etc.)
+- MUST include {{ message }} variable — this is where the original user message gets inserted
+- Available context: {{ message }}, {{ user_name }}, {{ channel_name }}, {{ worktree.name }}
+- Only applied to the FIRST message (session creation); follow-up messages use raw text
+- Focus on adding system context, role framing, or constraints around the raw message
+- Keep it concise — the user's message is the main content
+
 ### Scheduler Templates (target: "scheduler")
 - Generate Handlebars templates for scheduled/cron tasks
 - Include scheduling context variables

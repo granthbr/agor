@@ -70,6 +70,11 @@
       "import": "./dist/lib/feathers-validation.js",
       "require": "./dist/lib/feathers-validation.cjs"
     },
+    "./templates/compose": {
+      "types": "./dist/templates/compose.d.ts",
+      "import": "./dist/templates/compose.js",
+      "require": "./dist/templates/compose.cjs"
+    },
     "./templates/handlebars-helpers": {
       "types": "./dist/templates/handlebars-helpers.d.ts",
       "import": "./dist/templates/handlebars-helpers.js",

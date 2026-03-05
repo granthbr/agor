@@ -6,6 +6,7 @@ import type {
   GatewayChannel,
   MCPServer,
   PermissionMode,
+  PromptTemplate,
   User,
   UUID,
   Worktree,
@@ -14,6 +15,7 @@ import {
   CopyOutlined,
   DeleteOutlined,
   EditOutlined,
+  FileTextOutlined,
   KeyOutlined,
   MessageOutlined,
   PlusOutlined,
@@ -47,6 +49,7 @@ import { useThemedMessage } from '@/utils/message';
 import { AgenticToolConfigForm } from '../AgenticToolConfigForm';
 import { AgentSelectionGrid } from '../AgentSelectionGrid';
 import { AVAILABLE_AGENTS } from '../AgentSelectionGrid/availableAgents';
+import { PreprocessorPicker } from '../PromptLibrary/PreprocessorPicker';
 
 interface GatewayChannelsTableProps {
   client: AgorClient | null;
@@ -123,6 +126,11 @@ const ChannelFormFields: React.FC<{
   onAgentChange: (agent: string) => void;
   editingChannel?: GatewayChannel | null;
   onCopyKey?: (key: string) => void;
+  client: AgorClient | null;
+  selectedTemplateId: string | undefined;
+  onTemplateChange: (id: string | undefined) => void;
+  selectedPreprocessorIds: string[];
+  onPreprocessorIdsChange: (ids: string[]) => void;
 }> = ({
   form,
   mode,
@@ -135,6 +143,11 @@ const ChannelFormFields: React.FC<{
   onAgentChange,
   editingChannel,
   onCopyKey,
+  client,
+  selectedTemplateId,
+  onTemplateChange,
+  selectedPreprocessorIds,
+  onPreprocessorIdsChange,
 }) => {
   // Watch message source settings for showing warnings/scope requirements
   const enableChannels = Form.useWatch('enable_channels', form) ?? false;
@@ -144,6 +157,20 @@ const ChannelFormFields: React.FC<{
   const alignSlackUsers = Form.useWatch('align_slack_users', form) ?? false;
 
   const sourcesEnabled = enableChannels || enableGroups || enableMpim;
+
+  // Fetch gateway templates for the template selector
+  const [gatewayTemplates, setGatewayTemplates] = useState<PromptTemplate[]>([]);
+  useEffect(() => {
+    if (!client) return;
+    client
+      .service('prompt-templates')
+      .find({ query: { category: 'gateway', is_latest: true, $limit: 100 } })
+      .then((result: unknown) => {
+        const data = (result as { data: PromptTemplate[] }).data ?? (result as PromptTemplate[]);
+        setGatewayTemplates(Array.isArray(data) ? data : []);
+      })
+      .catch(() => setGatewayTemplates([]));
+  }, [client]);
 
   return (
     <>
@@ -490,6 +517,57 @@ const ChannelFormFields: React.FC<{
               ),
             },
 
+            // ── Prompt Template ──
+            {
+              key: 'prompt-template',
+              label: (
+                <SectionLabel
+                  icon={<FileTextOutlined />}
+                  title="Prompt Template"
+                  subtitle={selectedTemplateId ? 'configured' : 'none'}
+                />
+              ),
+              children: (
+                <>
+                  <Typography.Text
+                    type="secondary"
+                    style={{ fontSize: 12, display: 'block', marginBottom: 16 }}
+                  >
+                    Wrap incoming messages with a prompt template when creating new sessions. Use{' '}
+                    <code>{'{{message}}'}</code> in the template to insert the original message.
+                    Only applies to the first message (session creation); follow-ups use raw text.
+                  </Typography.Text>
+
+                  <Form.Item label="Initial Template">
+                    <Select
+                      value={selectedTemplateId}
+                      onChange={(value: string | undefined) => onTemplateChange(value)}
+                      allowClear
+                      showSearch
+                      optionFilterProp="children"
+                      placeholder="No template (raw text)"
+                      style={{ width: '100%' }}
+                    >
+                      {gatewayTemplates.map((t) => (
+                        <Select.Option key={t.template_id} value={t.template_id}>
+                          {t.title}
+                        </Select.Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+
+                  {selectedTemplateId && (
+                    <PreprocessorPicker
+                      client={client}
+                      targetCategory="gateway"
+                      selectedIds={selectedPreprocessorIds}
+                      onChange={onPreprocessorIdsChange}
+                    />
+                  )}
+                </>
+              ),
+            },
+
             // ── Agentic Tool Configuration ──
             {
               key: 'agentic-tool-config',
@@ -551,6 +629,8 @@ export const GatewayChannelsTable: React.FC<GatewayChannelsTableProps> = ({
   const [createdChannelType, setCreatedChannelType] = useState<ChannelType | null>(null);
   const [createForm] = Form.useForm();
   const [editForm] = Form.useForm();
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | undefined>(undefined);
+  const [selectedPreprocessorIds, setSelectedPreprocessorIds] = useState<string[]>([]);
 
   // Pre-populate agentic config form with user defaults when agent changes
   useEffect(() => {
@@ -631,6 +711,8 @@ export const GatewayChannelsTable: React.FC<GatewayChannelsTableProps> = ({
       ...(values.codexNetworkAccess !== undefined
         ? { codexNetworkAccess: values.codexNetworkAccess as boolean }
         : {}),
+      ...(selectedTemplateId ? { initial_template_id: selectedTemplateId } : {}),
+      ...(selectedPreprocessorIds.length > 0 ? { preprocessor_ids: selectedPreprocessorIds } : {}),
     };
 
     return {
@@ -661,6 +743,8 @@ export const GatewayChannelsTable: React.FC<GatewayChannelsTableProps> = ({
       createForm.resetFields();
       setCreateModalOpen(false);
       setChannelType('slack');
+      setSelectedTemplateId(undefined);
+      setSelectedPreprocessorIds([]);
     } catch (error: unknown) {
       const err = error as { errorFields?: { errors: string[] }[]; message?: string };
       if (err.errorFields?.length) {
@@ -676,6 +760,8 @@ export const GatewayChannelsTable: React.FC<GatewayChannelsTableProps> = ({
     setChannelType(channel.channel_type);
     const agent = channel.agentic_config?.agent || 'claude-code';
     setSelectedAgent(agent);
+    setSelectedTemplateId(channel.agentic_config?.initial_template_id);
+    setSelectedPreprocessorIds(channel.agentic_config?.preprocessor_ids ?? []);
     editForm.resetFields();
 
     const config = channel.config as Record<string, unknown>;
@@ -918,6 +1004,8 @@ export const GatewayChannelsTable: React.FC<GatewayChannelsTableProps> = ({
           setCreateModalOpen(false);
           setChannelType('slack');
           setSelectedAgent('claude-code');
+          setSelectedTemplateId(undefined);
+          setSelectedPreprocessorIds([]);
         }}
         okText="Create"
         width={600}
@@ -933,6 +1021,11 @@ export const GatewayChannelsTable: React.FC<GatewayChannelsTableProps> = ({
             mcpServerById={mcpServerById}
             selectedAgent={selectedAgent}
             onAgentChange={setSelectedAgent}
+            client={client}
+            selectedTemplateId={selectedTemplateId}
+            onTemplateChange={setSelectedTemplateId}
+            selectedPreprocessorIds={selectedPreprocessorIds}
+            onPreprocessorIdsChange={setSelectedPreprocessorIds}
           />
         </Form>
       </Modal>
@@ -948,6 +1041,8 @@ export const GatewayChannelsTable: React.FC<GatewayChannelsTableProps> = ({
           setEditingChannel(null);
           setChannelType('slack');
           setSelectedAgent('claude-code');
+          setSelectedTemplateId(undefined);
+          setSelectedPreprocessorIds([]);
         }}
         okText="Save"
         width={600}
@@ -965,6 +1060,11 @@ export const GatewayChannelsTable: React.FC<GatewayChannelsTableProps> = ({
             onAgentChange={setSelectedAgent}
             editingChannel={editingChannel}
             onCopyKey={handleCopyKey}
+            client={client}
+            selectedTemplateId={selectedTemplateId}
+            onTemplateChange={setSelectedTemplateId}
+            selectedPreprocessorIds={selectedPreprocessorIds}
+            onPreprocessorIdsChange={setSelectedPreprocessorIds}
           />
         </Form>
       </Modal>

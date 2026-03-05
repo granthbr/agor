@@ -9,15 +9,19 @@
 import {
   type Database,
   GatewayChannelRepository,
+  PromptTemplatesRepository,
   ThreadSessionMapRepository,
   UsersRepository,
 } from '@agor/core/db';
 import type { Application } from '@agor/core/feathers';
 import type { GatewayConnector, InboundMessage } from '@agor/core/gateway';
 import { getConnector, hasConnector } from '@agor/core/gateway';
+import { composeTemplate } from '@agor/core/templates/compose';
+import { renderTemplate } from '@agor/core/templates/handlebars-helpers';
 import type {
   AgenticToolName,
   ChannelType,
+  GatewayAgenticConfig,
   GatewayChannel,
   MessageSource,
   Session,
@@ -69,6 +73,7 @@ export class GatewayService {
   private channelRepo: GatewayChannelRepository;
   private threadMapRepo: ThreadSessionMapRepository;
   private usersRepo: UsersRepository;
+  private promptTemplatesRepo: PromptTemplatesRepository;
   private app: Application;
 
   /** Active Socket Mode listeners keyed by channel ID */
@@ -86,6 +91,7 @@ export class GatewayService {
     this.channelRepo = new GatewayChannelRepository(db);
     this.threadMapRepo = new ThreadSessionMapRepository(db);
     this.usersRepo = new UsersRepository(db);
+    this.promptTemplatesRepo = new PromptTemplatesRepository(db);
     this.app = app;
   }
 
@@ -115,6 +121,66 @@ export class GatewayService {
     } catch {
       // Ignore — debug messages are best-effort
     }
+  }
+
+  /**
+   * Compose a gateway prompt by wrapping raw text with a template + preprocessors.
+   * Returns raw text unchanged if no template is configured.
+   */
+  private async composeGatewayPrompt(
+    rawText: string,
+    agenticConfig: GatewayAgenticConfig | null,
+    context: { user_name?: string; channel_name?: string; worktree_name?: string }
+  ): Promise<string> {
+    if (!agenticConfig?.initial_template_id) return rawText;
+
+    const mainTemplate = await this.promptTemplatesRepo.findById(agenticConfig.initial_template_id);
+    if (!mainTemplate) {
+      console.warn(
+        `[gateway] Template ${agenticConfig.initial_template_id} not found, using raw text`
+      );
+      return rawText;
+    }
+
+    // Render Handlebars variables in the main template
+    let rendered = renderTemplate(mainTemplate.template, {
+      message: rawText,
+      user_name: context.user_name,
+      channel_name: context.channel_name,
+      worktree: { name: context.worktree_name },
+    });
+
+    if (!rendered) {
+      console.warn('[gateway] Template rendered to empty string, using raw text');
+      return rawText;
+    }
+
+    // Compose with preprocessors if configured
+    if (agenticConfig.preprocessor_ids?.length) {
+      const preprocessors: Array<{
+        template: string;
+        metadata?: { insertion_mode?: 'before' | 'after' } | null;
+      }> = [];
+
+      for (const ppId of agenticConfig.preprocessor_ids) {
+        const pp = await this.promptTemplatesRepo.findById(ppId);
+        if (pp) {
+          const meta = pp.metadata as { insertion_mode?: 'before' | 'after' } | null;
+          preprocessors.push({ template: pp.template, metadata: meta });
+        } else {
+          console.warn(`[gateway] Preprocessor template ${ppId} not found, skipping`);
+        }
+      }
+
+      if (preprocessors.length > 0) {
+        rendered = composeTemplate(rendered, preprocessors);
+      }
+    }
+
+    // Fire-and-forget usage tracking
+    this.promptTemplatesRepo.incrementUsageCount(mainTemplate.template_id).catch(() => {});
+
+    return rendered;
   }
 
   /**
@@ -238,6 +304,7 @@ export class GatewayService {
 
     let sessionId: string;
     let created = false;
+    let promptText = data.text; // Default to raw text; overwritten for new sessions with templates
 
     // Resolve agentic config: channel config > user defaults > system defaults
     const channelConfig = channel.agentic_config;
@@ -273,9 +340,16 @@ export class GatewayService {
         `Creating new ${agenticTool} session (${permissionMode} mode)...`
       );
 
+      // Compose prompt with template + preprocessors (if configured)
+      promptText = await this.composeGatewayPrompt(data.text, channelConfig, {
+        user_name: data.user_name,
+        channel_name: channel.name,
+        worktree_name: channel.target_worktree_id,
+      });
+
       const session = await sessionsService.create({
         title: data.text.substring(0, 100),
-        description: data.text,
+        description: promptText,
         worktree_id: channel.target_worktree_id,
         created_by: user.user_id,
         // Stamp session with creator's unix_username for executor impersonation.
@@ -359,7 +433,7 @@ export class GatewayService {
       // Internal call: pass user, omit provider to bypass auth hooks
       // Mark message source as 'gateway' so it won't be echoed back to Slack
       const response = await promptService.create(
-        { prompt: data.text, permissionMode, messageSource: 'gateway' },
+        { prompt: promptText, permissionMode, messageSource: 'gateway' },
         { route: { id: sessionId }, user }
       );
 
